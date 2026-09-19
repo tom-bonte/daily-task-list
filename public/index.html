@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Daily Task List</title>
+  <meta name="theme-color" content="#f5f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✅</text></svg>">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <nav id="tabs" aria-label="Sections">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">✓</span>Daily Task List</div>
+    <button data-action="view" data-view="day">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M8 2.5v4M16 2.5v4M9 15l2 2 4-4"/></svg>
+      <span>Day</span><kbd>1</kbd>
+    </button>
+    <button data-action="view" data-view="stats">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-8M12 20V4M19 20v-5"/></svg>
+      <span>Stats</span><kbd>2</kbd>
+    </button>
+    <button data-action="view" data-view="backlog">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 13.5h5l1.5 2.5h4l1.5-2.5h5"/><path d="M5.5 5.5h13l2 8v5a1.5 1.5 0 0 1-1.5 1.5h-14a1.5 1.5 0 0 1-1.5-1.5v-5z"/></svg>
+      <span>Wachtruimte</span><kbd>3</kbd>
+    </button>
+    <button data-action="view" data-view="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      <span>Settings</span><kbd>4</kbd>
+    </button>
+    <div class="nav-foot" id="nav-foot"></div>
+  </nav>
+  <div id="runbar" hidden></div>
+  <div class="shell">
+    <main id="view"><div class="loading">Loading…</div></main>
+  </div>
+  <dialog id="sheet" aria-label="Edit task"></dialog>
+  <div id="tip" role="tooltip"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
