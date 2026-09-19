@@ -27,7 +27,9 @@ All app code is in `public/`, as ES modules loaded straight from the browser. Th
 - `js/model.js`: pure logic with no DOM or Firebase. It holds the category presets, keyword auto-categorization (`PRESET_KEYWORDS` + `guessCategory`, mixed EN/NL/ES), settings migrations (`SETTINGS_VERSION`, `migrateCategories`), `parseTarget` (reads a planned duration from text like "2hr…" or "5:45-6:45…"), `normText` (strips times so the same task groups across days), time math, carry-over, and date/period helpers.
 - `js/app.js`: state object `S`, full re-render via `innerHTML` templates, event delegation on `data-action` / `data-change` / `data-form` attributes, timer logic, and the edit-task `<dialog>`. A 1s `tick()` updates only the live numbers and does not re-render.
 - **Layout is desktop-first.** A fixed left sidebar (`#tabs`) holds the running timer card (`#runbar`). The day view is the task columns plus a right rail (`#rail`: category split and timeline; the user doesn't want the backlog there) that the tick refreshes every 15s. Below 1180px the rail drops under the tasks. Below 760px the sidebar becomes a bottom tab bar.
-- Keyboard shortcuts (in the `keydown` handler): `1`–`4` switch views, `N` or `/` focuses the add field, `←`/`→` change day, `T` jumps to today.
+- Keyboard shortcuts (in the `keydown` handler): `1`–`5` switch views, `N` focuses the add field, `/` opens Search, `←`/`→` change day, `T` jumps to today, `J`/`K` select a task, `Space` starts/stops its timer, `E` edits it, `X` completes it.
+- Tasks are reordered by HTML5 drag and drop (`dragstart`/`dragover`/`drop` on `#view`); dropping into another category card also changes the task's category. Category order is changed with the ↑/↓ buttons in Settings.
+- `sw.js` + `manifest.json` + `icon-*.png`: offline app shell (cache-first, refreshed in the background) and installability. The service worker is **not** registered on localhost, and unregisters itself there, so local edits are never served stale.
 - `js/ui.js`: `esc`, `catColor` (solid hue) / `catFill` (mark background, striped for slots 9–16) / `catVars` (sets both as `--cc` / `--cf` inline), `renderTimeline` (the day's timer sessions as a strip plus a list).
 - `js/stats.js`: `computeStats` (pure aggregation into categories, tasks, and day/month buckets) and `renderStats` (bars, stacked-column chart, table view).
 - `js/firebase.js` (Firestore store + Google auth) and `js/local-store.js` (demo store) implement the **same store interface**: `watchSettings`, `saveSettings`, `watchDay`, `getDay`, `saveDay`, `getDaysRange`, `getLastDayBefore`. `app.js` only talks to that interface.
@@ -44,12 +46,21 @@ All app code is in `public/`, as ES modules loaded straight from the browser. Th
   - Time spent = sum of sessions (a running session has `e: null`) + `adjust` (manual ± minutes).
   - Unknown `cat` values (from deleted categories) are shown under `general`.
 
+### Access control
+
+The database is locked to one account. `firestore.rules` reads `/config/owner`; the first signed-in user claims that document via `claimOwnership` in `js/firebase.js`, and everyone else gets a "Locked" screen. To hand the app to another account, delete `/config/owner` in the Firebase console. App Check is wired but off: set `window.APP_CHECK_KEY` in `index.html` to a reCAPTCHA v3 site key (Firebase console → App Check → register the web app) to turn it on.
+
 ### Invariants worth knowing
 
-- Only one timer runs at a time. `startTimer` always calls `stopRunning` first, and completing, deleting, or moving a running task stops it.
+- Only one timer runs at a time, on purpose (so tracked time never double-counts). `startTimer` always calls `stopRunning` first, and completing, deleting, or moving a running task stops it.
+- Session hygiene (`tidySessions`): runs under `MIN_SESSION_MS` (1 min) are dropped, and blocks of the same task less than `MERGE_GAP_MS` (2 min) apart are merged. It runs on stop, on sheet save, and on log-time. `startTimer` reopens the previous block instead of creating a new one if it ended within 2 min and no other task ran in between. The day-view timeline rows have a × (`session-del`) to delete a block.
+- Learning: a manual category change saves exact-text `memory` and then offers, via the `ask()` prompt, to move the deciding keyword (`explainGuess`), or the first meaningful word (`learnableWord`), into the chosen category's keywords. Nothing is learned without the user confirming.
 - Days are keyed by **local** date. "Plan tomorrow" and "Start from <last day>" use `carryOver`, which copies **only** tasks marked "repeat daily" (user preference), with fresh ids and zero time.
 - A snapshot can replace `S.day` at any time, so re-find tasks by id before mutating after any async gap (see the edit sheet's submit handler).
-- A running session (`e: null`) must stay **last** in `sessions`, because `stopRunning` and `isRunning` read `sessions.at(-1)`. Manually logged blocks (`blockFromTimes`: edit sheet "Add block", or the "Log time?" prompt shown when a task with planned time is checked off untimed) are inserted sorted before it.
+- A running session (`e: null`) must stay **last** in `sessions`, because `stopRunning` and `isRunning` read `sessions.at(-1)`. Manually logged blocks (`blockFromTimes`: edit sheet "Add block", or the "Log time?" prompt shown whenever a task is checked off with no logged time) are inserted sorted before it. From/To times typed in the edit sheet count on Save even without pressing "+ Add".
+- All writes go through `persist()`, which surfaces failures in the sticky `#banner` (also used for the offline notice). Deleting a task offers Undo through `ask()`.
+- `tick()` also handles the **day rollover** (`rollOver` splits a running timer at midnight and continues it on the new day) and the **long-timer guard** (`LONG_TIMER_MS`, 3h: a notification plus an `ask()` offering to trim). Notifications are per-device (`localStorage` `dtl-notify`), and on iOS they only arrive while the app is open.
+- In demo mode, `window.__dtl` exposes `{ S, rollOver }` for testing time-dependent paths without touching the clock.
 - The edit sheet saves in its form `submit` handler, not in the `<dialog>` `close` event. Chrome defers `close` in background tabs.
 - The web `apiKey` is public. Security comes from `firestore.rules`, which gives each user access only to `users/{uid}/**`.
 - Chart colors use a validated categorical palette (CSS vars `--c1..--c8`, `--c0` gray) with separate light and dark steps. More hues fail the colorblind checks, so categories beyond 8 use the striped variants rather than new colors. Marks use `var(--cf)`.

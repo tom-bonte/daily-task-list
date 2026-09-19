@@ -4,12 +4,17 @@ import { esc, catColor, catFill, catVars, renderTimeline, SLOT_NAMES } from './u
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 
+const LONG_TIMER_MS = 3 * 3600000;
+const NOTIFY_KEY = 'dtl-notify';
+
 const S = {
-  fb: null, store: null, user: null,
+  fb: null, store: null, user: null, today: M.todayKey(), longAsked: null,
   settings: null,
   date: M.todayKey(), day: null, dayLoaded: false, lastBefore: undefined,
   view: 'day',
   stats: { kind: 'day', anchor: M.todayKey(), days: null, expanded: new Set() },
+  search: { q: '', days: null, loading: false },
+  sel: null,
   unsub: [],
 };
 
@@ -32,10 +37,20 @@ async function boot() {
     viewEl.innerHTML = `<div class="login"><p>Couldn't load Firebase. Check your connection.</p><p class="muted">${esc(e.message)}</p></div>`;
     return;
   }
-  S.fb.onUser(user => {
+  S.fb.onUser(async user => {
     stop();
     S.user = user;
     if (!user) return renderLogin();
+    // This database belongs to whoever signed in first.
+    let owner = 'owner';
+    try { owner = await S.fb.claimOwnership(user.uid); } catch { owner = 'error'; }
+    if (owner !== 'owner') {
+      document.body.classList.add('logged-out');
+      viewEl.innerHTML = owner === 'locked'
+        ? '<div class="login"><h1>Locked</h1><p class="muted">This app is locked to another Google account.</p><button class="ghost" data-action="sign-out">Sign out</button></div>'
+        : '<div class="login"><h1>Can\'t reach the database</h1><p class="muted">Check your connection and reload.</p><button class="ghost" data-action="sign-out">Sign out</button></div>';
+      return;
+    }
     S.store = S.fb.createFirestoreStore(user.uid);
     start();
   });
@@ -92,12 +107,21 @@ function openDay(key) {
 
 // ---------------- persistence helpers ----------------
 
+// Writes are fire-and-forget; a rejection (rules, bad data) must not pass silently.
+// Offline writes stay pending in the Firestore cache and resolve on reconnect.
+function persist(promise, what) {
+  return promise.catch(err => {
+    console.error(err);
+    banner(`Couldn't save ${what}: ${err.code || err.message}`);
+  });
+}
+
 function saveSettings() {
-  return S.store.saveSettings(S.settings);
+  return persist(S.store.saveSettings(S.settings), 'settings');
 }
 
 function saveDay() {
-  return S.store.saveDay(S.date, S.day);
+  return persist(S.store.saveDay(S.date, S.day), 'this day');
 }
 
 // Apply fn to a day's data and persist it, whether or not that day is on screen.
@@ -110,7 +134,7 @@ async function mutateDay(key, fn) {
   } else {
     const d = (await S.store.getDay(key)) ?? { tasks: [] };
     fn(d);
-    await S.store.saveDay(key, d);
+    await persist(S.store.saveDay(key, d), 'that day');
   }
 }
 
@@ -126,10 +150,16 @@ async function stopRunning(now = Date.now()) {
   if (!r) return;
   S.settings.running = null;
   saveSettings();
+  let dropped = false;
   await mutateDay(r.date, d => {
-    const last = d.tasks.find(t => t.id === r.id)?.sessions.at(-1);
-    if (last && last.e == null) last.e = now;
+    const t = d.tasks.find(t => t.id === r.id);
+    const last = t?.sessions.at(-1);
+    if (!last || last.e != null) return;
+    last.e = now;
+    dropped = now - last.s < M.MIN_SESSION_MS;
+    t.sessions = M.tidySessions(t.sessions);
   });
+  if (dropped) toast('Under a minute, not logged');
 }
 
 async function startTimer(id) {
@@ -137,8 +167,15 @@ async function startTimer(id) {
   await stopRunning(now);
   const t = findTask(id);
   if (!t) return;
-  t.sessions.push({ s: now, e: null });
-  S.settings.running = { date: S.date, id, text: t.text, cat: t.cat, base: M.taskMs(t, now), s: now };
+  // Restarting within a couple of minutes (and nothing else ran meanwhile)
+  // continues the previous block instead of starting a new one.
+  const prev = t.sessions.at(-1);
+  const resumable = prev && prev.e != null && now - prev.e >= 0 && now - prev.e <= M.MERGE_GAP_MS
+    && !S.day.tasks.some(x => x.id !== id && x.sessions.some(q => (q.e ?? now) > prev.e && q.s < now));
+  if (resumable) prev.e = null;
+  else t.sessions.push({ s: now, e: null });
+  const open = t.sessions.at(-1);
+  S.settings.running = { date: S.date, id, text: t.text, cat: t.cat, base: M.taskMs({ ...t, sessions: t.sessions.slice(0, -1) }), s: open.s };
   render();
   await saveDay();
   saveSettings();
@@ -150,15 +187,16 @@ const isRunningTask = id => S.settings.running?.date === S.date && S.settings.ru
 
 function render() {
   if (!S.settings) { viewEl.innerHTML = '<div class="loading">Loading…</div>'; return; }
-  const add = viewEl.querySelector('form[data-form] input[name=text]');
+  const add = viewEl.querySelector('form[data-form] input[name=text], form[data-form=search] input[name=q]');
   const keep = add && { form: add.form.dataset.form, value: add.value, focused: document.activeElement === add };
 
   viewEl.innerHTML = S.view === 'day' ? dayView()
     : S.view === 'stats' ? statsView()
+    : S.view === 'search' ? searchView()
     : `<div class="page narrow">${S.view === 'backlog' ? backlogView() : settingsView()}</div>`;
 
   if (keep) {
-    const again = viewEl.querySelector(`form[data-form="${keep.form}"] input[name=text]`);
+    const again = viewEl.querySelector(`form[data-form="${keep.form}"] input`);
     if (again && keep.value) { again.value = keep.value; syncGuess(again); }
     if (again && keep.focused) again.focus();
   }
@@ -194,7 +232,7 @@ function dayView() {
     const items = tasks.filter(t => catById(t.cat).id === cat.id);
     if (!items.length) return '';
     return `
-      <section class="catsec" style="${catVars(cat)}">
+      <section class="catsec" data-cat="${esc(cat.id)}" style="${catVars(cat)}">
         <h2><span class="dot"></span><span class="emoji">${esc(cat.emoji || '')}</span>${esc(cat.name)}
           <span class="cat-total" data-cat-total="${esc(cat.id)}">${byCat[cat.id] ? M.fmtDur(byCat[cat.id]) : ''}</span></h2>
         <ul class="tasks">${items.map(taskRow).join('')}</ul>
@@ -263,7 +301,7 @@ function railHtml(now = Date.now()) {
     </section>
     <section class="card">
       <h2>Timeline</h2>
-      ${renderTimeline(S.date, S.day?.tasks, cats, now)}
+      ${renderTimeline(S.date, S.day?.tasks, cats, now, 6, true)}
     </section>
 `;
 }
@@ -281,7 +319,7 @@ function taskRow(t) {
     t.repeat ? '<span title="Repeats daily">↻ daily</span>' : '',
   ].filter(Boolean).join(' · ');
   return `
-    <li class="task ${t.done ? 'done' : ''} ${running ? 'running' : ''}" data-id="${t.id}">
+    <li class="task ${t.done ? 'done' : ''} ${running ? 'running' : ''} ${S.sel === t.id ? 'selected' : ''}" draggable="true" data-id="${t.id}">
       <button class="check" role="checkbox" aria-checked="${t.done}" data-action="toggle-done" aria-label="Done: ${esc(t.text)}">${CHECK}</button>
       <button class="task-main" data-action="edit">
         <span class="task-text">${esc(t.text)}</span>
@@ -364,6 +402,8 @@ function settingsView() {
                   return `<option value="${i}" ${i === (c.slot ?? 0) ? 'selected' : ''}>${n}${owner ? ` · ${esc(owner.name)}` : ''}</option>`;
                 }).join('')}
               </select>
+                <button class="icon" data-action="cat-move" data-dir="-1" aria-label="Move ${esc(c.name)} up" title="Move up">↑</button>
+              <button class="icon" data-action="cat-move" data-dir="1" aria-label="Move ${esc(c.name)} down" title="Move down">↓</button>
               ${c.id === M.FALLBACK_CAT ? '<span class="icon"></span>' : `<button class="icon" data-action="cat-del" aria-label="Delete ${esc(c.name)}">×</button>`}
             </div>
             ${c.id === M.FALLBACK_CAT ? '' : `<input class="keywords" data-change="cat-field" data-field="keywords" value="${esc((c.keywords || []).join(', '))}" placeholder="Keywords, e.g. run, gym, swim*" aria-label="Keywords for ${esc(c.name)}">`}
@@ -374,16 +414,31 @@ function settingsView() {
     <section class="card">
       <h2>Account</h2>
       <p>${esc(S.user?.email || '')}</p>
+      <label class="check-label settings-check">
+        <input type="checkbox" data-change="notify" ${localStorage.getItem(NOTIFY_KEY) === '1' ? 'checked' : ''}>
+        Warn me when a timer has run for ${M.fmtDur(LONG_TIMER_MS)}
+      </label>
+      <p class="muted small">Shows a notification on this device while the app is open (a background tab counts), plus a prompt in the app.</p>
+      <p class="muted small">Your data lives in Firebase and is locked to this account. Keep a copy now and then.</p>
+      <button class="ghost" data-action="export">Download my data (JSON)</button>
       ${DEMO
-        ? '<p class="muted small">Demo data lives only in this browser.</p><button class="ghost" data-action="demo-reset">Clear demo data</button> <a class="ghost btnlink" href="./">Leave demo</a>'
+        ? ' <button class="ghost" data-action="demo-reset">Clear demo data</button> <a class="ghost btnlink" href="./">Leave demo</a>'
         : '<button class="ghost" data-action="sign-out">Sign out</button>'}
     </section>`;
 }
 
 // Live-update only the ticking numbers, once a second.
 function tick() {
+  if (M.todayKey() !== S.today) rollOver();
   const r = S.settings?.running;
   if (!r) return;
+  const elapsed = Date.now() - r.s;
+  if (elapsed >= LONG_TIMER_MS && S.longAsked !== r.s) {
+    S.longAsked = r.s;
+    const msg = `"${r.text}" has been running for ${M.fmtDur(r.base + elapsed)}. Still going?`;
+    notify('Timer still running', msg);
+    ask(msg, `Stop at ${M.fmtDur(LONG_TIMER_MS)}`, () => stopRunning(r.s + LONG_TIMER_MS));
+  }
   const now = Date.now();
   const clock = M.fmtClock(r.base + now - r.s);
   const el = $('#run-clock');
@@ -408,6 +463,37 @@ function tick() {
   if (S.view === 'stats' && S.stats.days && Math.floor(now / 1000) % 30 === 0 && !tip.classList.contains('show')) render();
 }
 
+// Past midnight: move the view to the new day and split a running timer so its
+// time lands on the day it was actually spent.
+async function rollOver() {
+  const prev = S.today;
+  const today = M.todayKey();
+  S.today = today;
+  const r = S.settings?.running;
+  if (S.settings && r && r.date === prev) {
+    const midnight = M.parseKey(today).getTime();
+    await stopRunning(midnight);
+    let id = null, base = 0;
+    await mutateDay(today, d => {
+      let x = d.tasks.find(t => M.normText(t.text) === M.normText(r.text));
+      if (!x) { x = M.newTask(r.text, r.cat); d.tasks.push(x); }
+      base = M.taskMs(x, midnight);
+      x.sessions.push({ s: midnight, e: null });
+      id = x.id;
+    });
+    S.settings.running = { date: today, id, text: r.text, cat: r.cat, base, s: midnight };
+    saveSettings();
+    toast('New day: the running timer continues here');
+  }
+  if (S.date === prev) openDay(today); else render();
+}
+
+// Desktop/browser notification; on a phone this only arrives while the app is open.
+function notify(title, body) {
+  if (localStorage.getItem(NOTIFY_KEY) !== '1' || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body, tag: 'dtl-timer' }); } catch { /* unsupported */ }
+}
+
 // ---------------- stats loading ----------------
 
 async function loadStats() {
@@ -424,8 +510,57 @@ function showView(view) {
   S.view = view;
   hideTip();
   if (view === 'stats') loadStats();
+  if (view === 'search') loadSearch();
   render();
   window.scrollTo(0, 0);
+}
+
+// Search across every day, filtered in the browser over one cached fetch.
+async function loadSearch() {
+  if (S.search.days || S.search.loading) return;
+  S.search.loading = true;
+  const days = await S.store.getDaysRange(M.addDays(M.todayKey(), -1095), M.addDays(M.todayKey(), 365));
+  S.search = { ...S.search, days, loading: false };
+  if (S.view === 'search') render();
+}
+
+function searchView() {
+  const q = S.search.q.trim().toLowerCase();
+  const days = (S.search.days || []).filter(d => d.date).sort((a, b) => b.date.localeCompare(a.date));
+  const hits = q.length < 2 ? [] : days
+    .map(d => ({ date: d.date, tasks: (d.tasks || []).filter(t => t.text.toLowerCase().includes(q)) }))
+    .filter(d => d.tasks.length);
+  const total = hits.reduce((a, d) => a + d.tasks.reduce((x, t) => x + M.taskMs(t), 0), 0);
+  const count = hits.reduce((a, d) => a + d.tasks.length, 0);
+
+  return `
+    <div class="page narrow">
+      <header class="viewhead"><h1>Search</h1></header>
+      <form class="addbar" data-form="search" role="search">
+        <input name="q" value="${esc(S.search.q)}" placeholder="Find a task in any day, e.g. etymology" autocomplete="off" aria-label="Search tasks">
+        ${S.search.q ? '<button type="button" class="ghost" data-action="search-clear">Clear</button>' : ''}
+      </form>
+      ${S.search.loading && !S.search.days ? '<div class="loading">Loading your days…</div>' : ''}
+      ${q.length < 2 ? '<p class="muted-note">Type at least two letters.</p>' : `
+        <p class="muted small">${count} task${count === 1 ? '' : 's'} on ${hits.length} day${hits.length === 1 ? '' : 's'} · ${M.fmtDur(total)} tracked</p>
+        ${hits.map(d => `
+          <section class="card search-day">
+            <div class="card-head">
+              <h2>${esc(M.dayLabel(d.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}</h2>
+              <button class="linkish" data-action="search-open" data-date="${d.date}">Open day →</button>
+            </div>
+            <ul class="stat-tasks flat">
+              ${d.tasks.map(t => {
+                const cat = catById(t.cat);
+                return `<li class="stat-task" style="${catVars(cat)}">
+                  <span class="dot"></span>
+                  <span class="stat-task-text">${t.done ? '<span class="muted">✓</span> ' : ''}${esc(t.text)}</span>
+                  <span class="stat-task-val">${M.taskMs(t) ? M.fmtDur(M.taskMs(t)) : '–'}</span>
+                </li>`;
+              }).join('')}
+            </ul>
+          </section>`).join('') || '<p class="muted-note">Nothing found.</p>'}`}
+    </div>`;
 }
 
 // ---------------- edit sheet ----------------
@@ -468,7 +603,7 @@ function openSheet(id) {
           <span class="small">Forgot the timer? Add when you did it:</span>
           <div class="addblock-row">
             ${timeInputs(date, t.target).replaceAll('required', '').replace('name="from"', 'name="bfrom"').replace('name="to"', 'name="bto"')}
-            <button type="button" class="ghost" data-sheet="addblock">Add block</button>
+            <button type="button" class="ghost" data-sheet="addblock">+ Add</button>
           </div>
         </div>
         <div class="adj">
@@ -493,6 +628,18 @@ function openSheet(id) {
   textIn.addEventListener('input', () => {
     if (!targetTouched && (t.target ?? null) === parsedAtOpen) targetIn.value = M.parseTarget(textIn.value) ?? '';
   });
+  // Times typed into From/To count on Save even without pressing "+ Add".
+  let blockDirty = false;
+  form.elements.bfrom.addEventListener('input', () => { blockDirty = true; });
+  form.elements.bto.addEventListener('input', () => { blockDirty = true; });
+  const addDraftBlock = () => {
+    const block = M.blockFromTimes(date, form.elements.bfrom.value, form.elements.bto.value);
+    if (!block) return false;
+    const open = draft.sessions.filter(s => s.e == null);
+    draft.sessions = [...draft.sessions.filter(s => s.e != null), block].sort((a, b) => a.s - b.s).concat(open);
+    blockDirty = false;
+    return true;
+  };
   const refreshTime = () => {
     $('#sheet-time').textContent = M.fmtDur(draftMs());
     $('#sheet-sessions').innerHTML = sessionsHtml(draft.sessions);
@@ -513,17 +660,18 @@ function openSheet(id) {
     }
     const act = e.target.closest('[data-sheet]')?.dataset.sheet;
     if (act === 'addblock') {
-      const block = M.blockFromTimes(date, form.elements.bfrom.value, form.elements.bto.value);
-      if (!block) return toast('Pick a start and end time');
-      const open = draft.sessions.filter(s => s.e == null);
-      draft.sessions = [...draft.sessions.filter(s => s.e != null), block].sort((a, b) => a.s - b.s).concat(open);
+      if (!addDraftBlock()) return toast('Pick a start and end time');
       return refreshTime();
     }
     if (act === 'cancel') sheet.close();
     if (act === 'delete') {
       if (isRunningTask(id)) await stopRunning();
       sheet.close();
-      await mutateDay(S.date, d => { d.tasks = d.tasks.filter(x => x.id !== id); });
+      const date = S.date;
+      const gone = structuredClone(findTask(id));
+      const at = S.day.tasks.findIndex(x => x.id === id);
+      await mutateDay(date, d => { d.tasks = d.tasks.filter(x => x.id !== id); });
+      ask(`Deleted “${gone.text}”`, 'Undo', () => mutateDay(date, d => { d.tasks.splice(at, 0, gone); }));
     }
     if (act === 'backlog') {
       if (isRunningTask(id)) await stopRunning();
@@ -539,20 +687,24 @@ function openSheet(id) {
   // defer in background tabs.
   form.onsubmit = e => {
     e.preventDefault();
+    if (blockDirty) addDraftBlock();
     sheet.close();
     // Re-find the task: a snapshot may have replaced S.day while the sheet was open.
     const cur = findTask(id);
     if (!cur) return render();
     const text = textIn.value.trim() || cur.text;
     const cat = form.elements.cat.value;
-    if (cat !== cur.cat) S.settings.memory[M.normText(text)] = cat;
+    if (cat !== cur.cat) {
+      S.settings.memory[M.normText(text)] = cat;
+      offerLearn(text, cat);
+    }
     const target = targetIn.value === '' ? null : Math.max(0, Math.round(+targetIn.value));
     // Closed sessions come from the draft; a session that was running when the
     // sheet opened keeps its live state. The open session must stay last.
     const liveStarts = new Set(t.sessions.filter(s => s.e == null).map(s => s.s));
     const closed = draft.sessions.filter(s => s.e != null && !liveStarts.has(s.s));
     const live = cur.sessions.filter(s => liveStarts.has(s.s));
-    const sessions = [...closed, ...live.filter(s => s.e != null)].sort((a, b) => a.s - b.s).concat(live.filter(s => s.e == null));
+    const sessions = M.tidySessions([...closed, ...live]);
     Object.assign(cur, { text, cat, target, repeat: form.elements.repeat.checked, adjust: draft.adjust, sessions });
     if (isRunningTask(id)) Object.assign(S.settings.running, { text, cat, base: M.taskMs({ ...cur, sessions: cur.sessions.slice(0, -1) }) });
     render();
@@ -563,7 +715,7 @@ function openSheet(id) {
   sheet.showModal();
 }
 
-// Shown after checking off a planned task that never had a timer running.
+// Shown after checking off a task that has no logged time.
 function openLogTime(id) {
   const t = findTask(id);
   if (!t) return;
@@ -597,8 +749,7 @@ function openLogTime(id) {
     await mutateDay(date, d => {
       const x = d.tasks.find(x => x.id === id);
       if (!x) return;
-      const open = x.sessions.filter(s => s.e == null);
-      x.sessions = [...x.sessions.filter(s => s.e != null), block].sort((a, b) => a.s - b.s).concat(open);
+      x.sessions = M.tidySessions([...x.sessions, block]);
     });
     toast(`Logged ${M.fmtDur(block.e - block.s)}`);
   };
@@ -658,6 +809,53 @@ function syncGuess(input) {
   if (!sel.dataset.touched) sel.value = M.guessCategory(input.value, S.settings.memory, S.settings.categories);
 }
 
+// Offer to learn from a manual category change: move the keyword that caused
+// the wrong guess (or the task's first meaningful word) to the chosen category.
+function offerLearn(text, chosen) {
+  const cats = S.settings.categories;
+  const { cat: guessed, kw } = M.explainGuess(text, cats);
+  if (guessed === chosen) return;
+  const word = kw || M.learnableWord(text);
+  const target = cats.find(c => c.id === chosen);
+  if (!word || !target || chosen === M.FALLBACK_CAT) return;
+  ask(`Always sort “${word}” into ${target.name}?`, 'Yes', () => {
+    for (const c of S.settings.categories) c.keywords = (c.keywords || []).filter(k => k !== word);
+    S.settings.categories.find(c => c.id === chosen).keywords.unshift(word);
+    saveSettings();
+    toast(`“${word}” now goes to ${target.name}`);
+  });
+}
+
+// Sticky message for problems the user must see (save errors, offline).
+function banner(msg, kind = 'error') {
+  const el = $('#banner');
+  el.textContent = msg;
+  el.className = `show ${kind}`;
+}
+function clearBanner() { $('#banner').className = ''; }
+
+function watchConnection() {
+  const sync = () => (navigator.onLine ? clearBanner() : banner('Offline. Changes are saved on this device and sync when you reconnect.', 'warn'));
+  addEventListener('online', sync);
+  addEventListener('offline', sync);
+  sync();
+}
+
+let askTimer;
+function ask(msg, yesLabel, onYes) {
+  const el = $('#ask');
+  el.innerHTML = `<span>${esc(msg)}</span><button class="primary" data-ask="yes">${esc(yesLabel)}</button><button class="ghost" data-ask="no">No</button>`;
+  el.classList.add('show');
+  el.onclick = e => {
+    const a = e.target.closest('[data-ask]')?.dataset.ask;
+    if (!a) return;
+    el.classList.remove('show');
+    if (a === 'yes') onYes();
+  };
+  clearTimeout(askTimer);
+  askTimer = setTimeout(() => el.classList.remove('show'), 12000);
+}
+
 let toastTimer;
 function toast(msg) {
   const el = $('#toast');
@@ -668,7 +866,7 @@ function toast(msg) {
 }
 
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-action]');
+  const el = e.target?.closest?.('[data-action]');
   if (!el || sheet.contains(el)) return;
   const act = el.dataset.action;
   const id = el.closest('[data-id]')?.dataset.id;
@@ -691,9 +889,9 @@ document.addEventListener('click', async e => {
       if (!t) break;
       if (!t.done && isRunningTask(id)) await stopRunning();
       await mutateDay(S.date, d => { const x = d.tasks.find(x => x.id === id); x.done = !x.done; });
-      // Checked off a planned task without ever timing it: offer to log when it happened.
+      // Checked off without any logged time: ask when it happened.
       const x = findTask(id);
-      if (x?.done && x.target && !M.taskMs(x)) openLogTime(id);
+      if (x?.done && !M.taskMs(x)) openLogTime(id);
       break;
     }
     case 'toggle-timer':
@@ -705,6 +903,15 @@ document.addEventListener('click', async e => {
       if (S.settings.running.date !== S.date) openDay(S.settings.running.date); else render();
       break;
     case 'edit': openSheet(id); break;
+    case 'session-del': {
+      const taskId = el.dataset.task, start = +el.dataset.s;
+      if (!confirm('Delete this time block?')) break;
+      await mutateDay(S.date, d => {
+        const x = d.tasks.find(x => x.id === taskId);
+        if (x) x.sessions = x.sessions.filter(q => q.s !== start || q.e == null);
+      });
+      break;
+    }
     case 'copy-last': {
       const tasks = M.carryOver(S.lastBefore?.tasks || []);
       await mutateDay(S.date, d => { d.tasks = [...d.tasks, ...tasks]; });
@@ -715,7 +922,7 @@ document.addEventListener('click', async e => {
       const existing = (await S.store.getDay(next)) ?? { tasks: [] };
       const have = new Set(existing.tasks.map(t => M.normText(t.text)));
       const add = M.carryOver(S.day?.tasks || []).filter(t => !have.has(M.normText(t.text)));
-      await S.store.saveDay(next, { tasks: [...existing.tasks, ...add] });
+      await persist(S.store.saveDay(next, { tasks: [...existing.tasks, ...add] }), 'the next day');
       openDay(next);
       toast(add.length ? `${add.length} task${add.length > 1 ? 's' : ''} carried over. Edit away.` : 'Already planned');
       break;
@@ -733,6 +940,8 @@ document.addEventListener('click', async e => {
       S.settings.backlog = S.settings.backlog.filter(b => b.id !== id);
       saveSettings(); render();
       break;
+    case 'search-open': openDay(el.dataset.date); showView('day'); break;
+    case 'search-clear': S.search.q = ''; render(); break;
     case 'stats-range':
       S.stats.kind = el.dataset.range; S.stats.days = null; S.stats.expanded.clear(); loadStats(); render();
       break;
@@ -742,6 +951,16 @@ document.addEventListener('click', async e => {
     case 'stats-toggle': {
       const c = el.dataset.cat;
       S.stats.expanded.has(c) ? S.stats.expanded.delete(c) : S.stats.expanded.add(c);
+      render();
+      break;
+    }
+    case 'cat-move': {
+      const cats = S.settings.categories;
+      const at = cats.findIndex(c => c.id === el.closest('[data-cat]').dataset.cat);
+      const to = at + (+el.dataset.dir);
+      if (to < 0 || to >= cats.length) break;
+      cats.splice(to, 0, ...cats.splice(at, 1));
+      saveSettings();
       render();
       break;
     }
@@ -758,6 +977,18 @@ document.addEventListener('click', async e => {
       saveSettings(); render();
       break;
     }
+    case 'export': {
+      toast('Collecting your data…');
+      const days = await S.store.getDaysRange('0000-01-01', '9999-12-31');
+      const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), settings: S.settings, days }, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `daily-task-list-${M.todayKey()}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast(`Downloaded ${days.length} day${days.length === 1 ? '' : 's'}`);
+      break;
+    }
     case 'demo-reset':
       if (confirm('Clear all demo data?')) { localStorage.removeItem('dtl-demo'); location.reload(); }
       break;
@@ -765,15 +996,19 @@ document.addEventListener('click', async e => {
 });
 
 document.addEventListener('submit', async e => {
-  const form = e.target.closest('form[data-form]');
+  const form = e.target?.closest?.('form[data-form]');
   if (!form) return;
   e.preventDefault();
+  if (form.dataset.form === 'search') return;
   const text = form.elements.text.value.trim();
   if (!text) return;
   const touched = !!form.elements.cat.dataset.touched;
   // Unless a category was picked by hand, guess from the final text.
   const cat = touched ? form.elements.cat.value : M.guessCategory(text, S.settings.memory, S.settings.categories);
-  if (touched) S.settings.memory[M.normText(text)] = cat;
+  if (touched) {
+    S.settings.memory[M.normText(text)] = cat;
+    offerLearn(text, cat);
+  }
   form.elements.text.value = '';
   delete form.elements.cat.dataset.touched;
   if (form.dataset.form === 'add') {
@@ -787,42 +1022,81 @@ document.addEventListener('submit', async e => {
 });
 
 // Global shortcuts (ignored while typing or with a dialog open).
-const VIEW_KEYS = { 1: 'day', 2: 'stats', 3: 'backlog', 4: 'settings' };
+const VIEW_KEYS = { 1: 'day', 2: 'stats', 3: 'search', 4: 'backlog', 5: 'settings' };
 document.addEventListener('keydown', e => {
   if (!S.settings || sheet.open || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.target.closest('input, select, textarea')) {
+  if (e.target?.closest?.('input, select, textarea')) {
     if (e.key === 'Escape') e.target.blur();
     return;
   }
   if (VIEW_KEYS[e.key]) return showView(VIEW_KEYS[e.key]);
-  if (e.key === 'n' || e.key === '/') {
+  if (e.key === 'n') {
     e.preventDefault();
     if (S.view !== 'day' && S.view !== 'backlog') showView('day');
     viewEl.querySelector('form[data-form] input[name=text]')?.focus();
     return;
   }
+  if (e.key === '/') {
+    e.preventDefault();
+    showView('search');
+    viewEl.querySelector('input[name=q]')?.focus();
+    return;
+  }
   if (S.view !== 'day') return;
-  if (e.key === 'ArrowLeft') openDay(M.addDays(S.date, -1));
-  if (e.key === 'ArrowRight') openDay(M.addDays(S.date, 1));
-  if (e.key === 't') openDay(M.todayKey());
+  if (e.key === 'ArrowLeft') return openDay(M.addDays(S.date, -1));
+  if (e.key === 'ArrowRight') return openDay(M.addDays(S.date, 1));
+  if (e.key === 't') return openDay(M.todayKey());
+
+  // Task selection: j/k (or ↓/↑ with shift) move, space starts/stops its timer.
+  const ids = (S.day?.tasks || []).map(t => t.id);
+  if (!ids.length) return;
+  if (e.key === 'j' || e.key === 'k') {
+    e.preventDefault();
+    const at = ids.indexOf(S.sel);
+    S.sel = at < 0
+      ? ids[e.key === 'j' ? 0 : ids.length - 1]
+      : ids[Math.max(0, Math.min(ids.length - 1, at + (e.key === 'j' ? 1 : -1)))];
+    render();
+    viewEl.querySelector('.task.selected')?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  if (!S.sel || !ids.includes(S.sel)) return;
+  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); isRunningTask(S.sel) ? stopRunning() : startTimer(S.sel); }
+  if (e.key === 'e') { e.preventDefault(); openSheet(S.sel); }
+  if (e.key === 'x') { e.preventDefault(); viewEl.querySelector(`.task[data-id="${S.sel}"] .check`)?.click(); }
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.isComposing && e.target.matches('form[data-form] input[name=text]')) {
+  if (e.key === 'Enter' && !e.isComposing && e.target?.matches?.('form[data-form] input[name=text]')) {
     e.preventDefault();
     e.target.form.requestSubmit();
   }
 });
 
+let searchDebounce;
 document.addEventListener('input', e => {
+  if (!e.target?.matches) return;
   if (e.target.matches('form[data-form] input[name=text]')) syncGuess(e.target);
+  if (e.target.matches('form[data-form=search] input[name=q]')) {
+    S.search.q = e.target.value;
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => { const at = e.target.selectionStart; render(); const again = viewEl.querySelector('input[name=q]'); again?.focus(); again?.setSelectionRange(at, at); }, 200);
+  }
 });
 
 document.addEventListener('change', e => {
   const el = e.target;
+  if (!el?.matches) return;
   if (el.matches('form[data-form] select[name=cat]')) el.dataset.touched = '1';
   const kind = el.dataset.change;
   if (kind === 'pick-day' && el.value) openDay(el.value);
+  if (kind === 'notify') {
+    if (!el.checked) { localStorage.removeItem(NOTIFY_KEY); return; }
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') { localStorage.setItem(NOTIFY_KEY, '1'); toast('Notifications on for this device'); }
+      else { el.checked = false; toast('Your browser blocked notifications'); }
+    });
+  }
   if (kind === 'cat-field') {
     const cat = S.settings.categories.find(c => c.id === el.closest('[data-cat]').dataset.cat);
     const field = el.dataset.field;
@@ -841,6 +1115,64 @@ document.addEventListener('change', e => {
   }
 });
 
+let dragId = null;
+const clearDropMarks = () => viewEl.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+
+viewEl.addEventListener('dragstart', e => {
+  const li = e.target.closest('.task');
+  if (!li) return;
+  dragId = li.dataset.id;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragId);
+  li.classList.add('dragging');
+});
+
+viewEl.addEventListener('dragend', () => {
+  dragId = null;
+  clearDropMarks();
+  viewEl.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+});
+
+viewEl.addEventListener('dragover', e => {
+  if (!dragId) return;
+  const li = e.target.closest('.task');
+  const sec = e.target.closest('.catsec');
+  if (!li && !sec) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearDropMarks();
+  if (li && li.dataset.id !== dragId) {
+    const box = li.getBoundingClientRect();
+    li.classList.add(e.clientY < box.top + box.height / 2 ? 'drop-before' : 'drop-after');
+  } else if (sec && !li) {
+    sec.querySelector('.tasks')?.lastElementChild?.classList.add('drop-after');
+  }
+});
+
+viewEl.addEventListener('drop', async e => {
+  if (!dragId) return;
+  e.preventDefault();
+  const id = dragId;
+  const li = e.target.closest('.task');
+  const sec = e.target.closest('.catsec');
+  const cat = sec?.dataset.cat;
+  const marked = viewEl.querySelector('.drop-before, .drop-after');
+  const before = marked?.classList.contains('drop-before');
+  const refId = marked?.dataset.id;
+  clearDropMarks();
+  dragId = null;
+  if (!cat || (li && li.dataset.id === id)) return;
+  await mutateDay(S.date, d => {
+    const from = d.tasks.findIndex(t => t.id === id);
+    if (from < 0) return;
+    const [moved] = d.tasks.splice(from, 1);
+    moved.cat = cat;
+    const refAt = refId && refId !== id ? d.tasks.findIndex(t => t.id === refId) : -1;
+    if (refAt < 0) d.tasks.push(moved);
+    else d.tasks.splice(before ? refAt : refAt + 1, 0, moved);
+  });
+});
+
 viewEl.addEventListener('pointerover', e => { const col = e.target.closest('.col'); if (col) showTip(col); });
 viewEl.addEventListener('pointerleave', hideTip);
 viewEl.addEventListener('focusin', e => { const col = e.target.closest('.col'); if (col) showTip(col); });
@@ -848,4 +1180,17 @@ viewEl.addEventListener('focusout', hideTip);
 addEventListener('scroll', hideTip, { passive: true });
 
 setInterval(tick, 1000);
+watchConnection();
 boot();
+
+// Demo-only hook so the day-rollover path can be exercised in tests.
+if (DEMO) window.__dtl = { S, rollOver };
+
+// Offline shell. Skipped during local development so edits are never served stale.
+if ("serviceWorker" in navigator) {
+  const local = ["localhost", "127.0.0.1"].includes(location.hostname);
+  addEventListener("load", () => {
+    if (local) navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister()));
+    else navigator.serviceWorker.register("sw.js").catch(err => console.warn("Service worker failed:", err));
+  });
+}

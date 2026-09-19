@@ -29,7 +29,7 @@ export function catVars(cat) {
 }
 
 // Horizontal strip of the day's timer sessions, plus the latest sessions as a list.
-export function renderTimeline(date, tasks, categories, now = Date.now(), listMax = 6) {
+export function renderTimeline(date, tasks, categories, now = Date.now(), listMax = 6, deletable = false) {
   const catOf = id => categories.find(c => c.id === id) || categories.find(c => c.id === FALLBACK_CAT) || categories[0];
   const dayStart = parseKey(date).getTime();
   const dayEnd = dayStart + 86400000;
@@ -37,7 +37,7 @@ export function renderTimeline(date, tasks, categories, now = Date.now(), listMa
   for (const t of tasks || []) {
     for (const s of t.sessions || []) {
       const a = Math.max(s.s, dayStart), b = Math.min(s.e ?? now, dayEnd);
-      if (b > a) sessions.push({ a, b, live: s.e == null, text: t.text, cat: catOf(t.cat) });
+      if (b > a) sessions.push({ a, b, live: s.e == null, text: t.text, cat: catOf(t.cat), taskId: t.id, start: s.s });
     }
   }
   if (!sessions.length) return '<p class="muted-note">No timer sessions yet. Press ▶ on a task.</p>';
@@ -63,6 +63,7 @@ export function renderTimeline(date, tasks, categories, now = Date.now(), listMa
       <span class="tl-time">${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)}</span>
       <span class="tl-text">${esc(s.text)}</span>
       <span class="tl-dur">${fmtDur(s.b - s.a)}</span>
+      ${deletable ? (s.live ? '<span></span>' : `<button class="icon small tl-del" data-action="session-del" data-task="${esc(s.taskId)}" data-s="${s.start}" aria-label="Delete this time block" title="Delete">×</button>`) : ''}
     </li>`).join('');
 
   return `

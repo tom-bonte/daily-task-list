@@ -1,9 +1,30 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each signed-in user can only read and write their own data.
+
+    // The app is locked to one account. The first signed-in user claims
+    // /config/owner; after that nobody else can read or write any data.
+    // (No email or uid in the repo: the owner's uid lives in that document.)
+    function ownerDoc() {
+      return /databases/$(database)/documents/config/owner;
+    }
+    function isOwner() {
+      return request.auth != null
+        && exists(ownerDoc())
+        && get(ownerDoc()).data.uid == request.auth.uid;
+    }
+
+    match /config/owner {
+      allow get: if request.auth != null;
+      // Claimable exactly once, and only for yourself.
+      allow create: if request.auth != null
+        && !exists(ownerDoc())
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false; // only via the Firebase console
+    }
+
     match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isOwner() && request.auth.uid == uid;
     }
   }
 }

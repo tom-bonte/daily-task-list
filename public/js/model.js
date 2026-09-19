@@ -83,17 +83,44 @@ export function guessCategory(text, memory = {}, categories = DEFAULT_CATEGORIES
   const known = new Set(categories.map(c => c.id));
   const remembered = memory[normText(text)];
   if (remembered && known.has(remembered)) return remembered;
+  return explainGuess(text, categories).cat;
+}
+
+// Keyword-only guess plus the keyword that decided it (null when nothing matched).
+export function explainGuess(text, categories = DEFAULT_CATEGORIES) {
+  const known = new Set(categories.map(c => c.id));
   let best = null;
   for (const cat of categories) {
     for (const kw of categoryKeywords(cat)) {
       const m = keywordRe(kw).exec(text);
       if (!m) continue;
       const len = kw.replace(/\*$/, '').length;
-      if (!best || m.index < best.index || (m.index === best.index && len > best.len)) best = { index: m.index, len, cat: cat.id };
+      if (!best || m.index < best.index || (m.index === best.index && len > best.len)) best = { index: m.index, len, cat: cat.id, kw };
     }
   }
-  if (best) return best.cat;
-  return known.has(FALLBACK_CAT) ? FALLBACK_CAT : categories[0].id;
+  if (best) return { cat: best.cat, kw: best.kw };
+  return { cat: known.has(FALLBACK_CAT) ? FALLBACK_CAT : categories[0].id, kw: null };
+}
+
+// First word worth learning as a keyword: no numbers, times or filler words.
+const FILLER = new Set(['the', 'and', 'for', 'with', 'make', 'finish', 'start', 'van', 'het', 'een', 'met', 'voor', 'doen', 'maken', 'los', 'las', 'del', 'por', 'para', 'con', 'hacer']);
+export function learnableWord(text) {
+  return normText(text).split(/[^\p{L}]+/u).find(w => w.length >= 3 && !FILLER.has(w)) || null;
+}
+
+// Timer hygiene: drop runs under a minute (misclicks) and merge blocks of the
+// same task separated by at most MERGE_GAP_MS. A running session stays last.
+export const MIN_SESSION_MS = 60000;
+export const MERGE_GAP_MS = 120000;
+export function tidySessions(sessions) {
+  const open = sessions.filter(s => s.e == null);
+  const out = [];
+  for (const s of sessions.filter(s => s.e != null && s.e - s.s >= MIN_SESSION_MS).sort((a, b) => a.s - b.s)) {
+    const last = out.at(-1);
+    if (last && s.s - last.e <= MERGE_GAP_MS) last.e = Math.max(last.e, s.e);
+    else out.push({ s: s.s, e: s.e });
+  }
+  return [...out, ...open];
 }
 
 // One-time upgrades for settings saved by older versions of the app.

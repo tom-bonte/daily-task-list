@@ -17,11 +17,33 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+// App Check (optional): blocks other sites from using this project's key.
+// Set window.APP_CHECK_KEY in index.html to a reCAPTCHA v3 site key to turn it
+// on; see CLAUDE.md for the console steps.
+if (window.APP_CHECK_KEY) {
+  const { initializeAppCheck, ReCaptchaV3Provider } = await import("https://www.gstatic.com/firebasejs/12.19.0/firebase-app-check.js");
+  initializeAppCheck(app, { provider: new ReCaptchaV3Provider(window.APP_CHECK_KEY), isTokenAutoRefreshEnabled: true });
+}
 const auth = getAuth(app);
 // Offline cache so the app opens instantly and timers keep working without signal.
 const db = initializeFirestore(app, { ignoreUndefinedProperties: true, localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 
 export const onUser = cb => onAuthStateChanged(auth, cb);
+
+// The database is locked to one account: the first signed-in user claims
+// /config/owner (see firestore.rules). Returns 'owner' or 'locked'.
+export async function claimOwnership(uid) {
+  const ref = doc(db, 'config', 'owner');
+  const snap = await getDoc(ref);
+  if (snap.exists()) return snap.data().uid === uid ? 'owner' : 'locked';
+  try {
+    await setDoc(ref, { uid, claimedAt: Date.now() });
+    return 'owner';
+  } catch {
+    return 'locked'; // someone claimed it in the meantime
+  }
+}
 export const signIn = () => signInWithPopup(auth, new GoogleAuthProvider());
 export const signOut = () => fbSignOut(auth);
 
