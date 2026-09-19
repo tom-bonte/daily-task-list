@@ -1,0 +1,12 @@
+{
+  "devDependencies": {
+    "sharp": "^0.35.4"
+  },
+  "name": "daily-task-list",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "icons": "node scripts/build-icons.mjs",
+    "dev": "npx serve public -l 5173"
+  }
+}

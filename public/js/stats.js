@@ -1,5 +1,5 @@
 // Statistics: aggregation (pure) + HTML rendering for the Stats view.
-import { taskMs, normText, periodRange, periodLabel, addDays, parseKey, dayLabel, fmtDur, fmtMin, todayKey, FALLBACK_CAT } from './model.js';
+import { taskMs, overlapMs, normText, periodRange, periodLabel, addDays, parseKey, dayLabel, fmtDur, fmtMin, todayKey, FALLBACK_CAT } from './model.js';
 import { esc, catVars, catFill, renderTimeline } from './ui.js';
 
 export const RANGES = [['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']];
@@ -20,11 +20,12 @@ export function computeStats(days, categories, kind, anchor, now = Date.now()) {
 
   const byCat = {};
   const tasks = new Map();
-  let total = 0, done = 0, planned = 0;
+  let total = 0, done = 0, planned = 0, overlap = 0;
   const activeDays = new Set();
 
   for (const day of days) {
     if (day.date < from || day.date > to) continue;
+    overlap += overlapMs(day.tasks, now);
     for (const t of day.tasks || []) {
       const cat = known.has(t.cat) ? t.cat : FALLBACK_CAT;
       planned++;
@@ -53,7 +54,7 @@ export function computeStats(days, categories, kind, anchor, now = Date.now()) {
 
   const taskRows = [...tasks.values()].sort((a, b) => b.ms - a.ms || b.done - a.done);
 
-  return { kind, anchor, from, to, total, done, planned, activeDays: activeDays.size, catRows, taskRows, buckets };
+  return { kind, anchor, from, to, total, done, planned, overlap, activeDays: activeDays.size, catRows, taskRows, buckets };
 }
 
 export function renderStats(st, categories, expanded, days = []) {
@@ -65,7 +66,9 @@ export function renderStats(st, categories, expanded, days = []) {
 
   const top = st.catRows[0];
   const tiles = [
-    ['Tracked', fmtDur(st.total), isDay ? '' : `${st.activeDays} active day${st.activeDays === 1 ? '' : 's'}`],
+    ['Tracked', fmtDur(st.total), st.overlap >= 60000
+      ? `<span class="warn">⚠ ${fmtDur(st.overlap)} overlapped</span>`
+      : (isDay ? '' : `${st.activeDays} active day${st.activeDays === 1 ? '' : 's'}`)],
     isDay
       ? ['Planned', fmtDur(st.taskRows.reduce((a, t) => a + t.target, 0) * 60000), 'from task durations']
       : ['Per active day', st.activeDays ? fmtDur(st.total / st.activeDays) : '–', 'average'],

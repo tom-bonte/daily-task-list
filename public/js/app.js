@@ -145,43 +145,45 @@ const findTask = id => S.day?.tasks.find(t => t.id === id);
 
 // ---------------- timers ----------------
 
-async function stopRunning(now = Date.now()) {
-  const r = S.settings.running;
-  if (!r) return;
-  S.settings.running = null;
+// Stops one running timer, or all of them when no id is given.
+async function stopRunning(id = null, now = Date.now()) {
+  const runs = S.settings.running.filter(r => id == null || r.id === id);
+  if (!runs.length) return;
+  S.settings.running = S.settings.running.filter(r => !runs.includes(r));
   saveSettings();
-  let dropped = false;
-  await mutateDay(r.date, d => {
-    const t = d.tasks.find(t => t.id === r.id);
-    const last = t?.sessions.at(-1);
-    if (!last || last.e != null) return;
-    last.e = now;
-    dropped = now - last.s < M.MIN_SESSION_MS;
-    t.sessions = M.tidySessions(t.sessions);
-  });
+  let dropped = 0;
+  for (const r of runs) {
+    await mutateDay(r.date, d => {
+      const t = d.tasks.find(t => t.id === r.id);
+      const last = t?.sessions.at(-1);
+      if (!last || last.e != null) return;
+      last.e = now;
+      if (now - last.s < M.MIN_SESSION_MS) dropped++;
+      t.sessions = M.tidySessions(t.sessions);
+    });
+  }
   if (dropped) toast('Under a minute, not logged');
 }
 
 async function startTimer(id) {
   const now = Date.now();
-  await stopRunning(now);
   const t = findTask(id);
   if (!t) return;
   // Restarting within a couple of minutes (and nothing else ran meanwhile)
   // continues the previous block instead of starting a new one.
   const prev = t.sessions.at(-1);
-  const resumable = prev && prev.e != null && now - prev.e >= 0 && now - prev.e <= M.MERGE_GAP_MS
-    && !S.day.tasks.some(x => x.id !== id && x.sessions.some(q => (q.e ?? now) > prev.e && q.s < now));
+  const resumable = prev && prev.e != null && now - prev.e >= 0 && now - prev.e <= M.MERGE_GAP_MS;
   if (resumable) prev.e = null;
   else t.sessions.push({ s: now, e: null });
   const open = t.sessions.at(-1);
-  S.settings.running = { date: S.date, id, text: t.text, cat: t.cat, base: M.taskMs({ ...t, sessions: t.sessions.slice(0, -1) }), s: open.s };
+  S.settings.running.push({ date: S.date, id, text: t.text, cat: t.cat, base: M.taskMs({ ...t, sessions: t.sessions.slice(0, -1) }), s: open.s });
   render();
   await saveDay();
   saveSettings();
 }
 
-const isRunningTask = id => S.settings.running?.date === S.date && S.settings.running?.id === id;
+const runFor = id => S.settings.running.find(r => r.date === S.date && r.id === id);
+const isRunningTask = id => !!runFor(id);
 
 // ---------------- rendering ----------------
 
@@ -212,19 +214,21 @@ function catOptions(selected) {
 function dayTotals(now = Date.now()) {
   const byCat = {};
   let total = 0;
+  // Ignore a few stray seconds of overlap; only real double counting is worth a warning.
+  const overlap = Math.max(0, M.overlapMs(S.day?.tasks, now));
   for (const t of S.day?.tasks || []) {
     const ms = M.taskMs(t, now);
     const cat = catById(t.cat).id;
     byCat[cat] = (byCat[cat] || 0) + ms;
     total += ms;
   }
-  return { total, byCat };
+  return { total, byCat, overlap };
 }
 
 function dayView() {
   const tasks = S.day?.tasks || [];
   const rel = M.relativeLabel(S.date);
-  const { total, byCat } = dayTotals();
+  const { total, byCat, overlap } = dayTotals();
   const done = tasks.filter(t => t.done).length;
   const next = M.addDays(S.date, 1);
 
@@ -269,7 +273,7 @@ function dayView() {
           ${isToday ? '' : '<button class="ghost" data-action="goto-today" title="Today (T)">Today</button>'}
         </div>
         <div class="tiles compact">
-          <div class="tile"><span class="tile-label">Tracked</span><span class="tile-value" id="day-total">${M.fmtDur(total)}</span></div>
+          <div class="tile"><span class="tile-label">Tracked</span><span class="tile-value" id="day-total">${M.fmtDur(total)}</span>${overlap >= 60000 ? `<span class="tile-sub warn" title="Two timers ran at the same time, so the total counts that time twice">⚠ ${M.fmtDur(overlap)} overlapped</span>` : ''}</div>
           <div class="tile"><span class="tile-label">Planned</span><span class="tile-value">${planned ? M.fmtMin(planned) : '–'}</span></div>
           <div class="tile"><span class="tile-label">Done</span><span class="tile-value">${done}/${tasks.length}</span></div>
         </div>
@@ -298,6 +302,7 @@ function railHtml(now = Date.now()) {
     <section class="card">
       <div class="card-head"><h2>Time by category</h2><button class="linkish" data-action="day-stats">Stats →</button></div>
       ${categoryBars(st, null, false)}
+      ${st.overlap >= 60000 ? `<p class="muted-note warn">⚠ ${M.fmtDur(st.overlap)} of this counts twice: timers overlapped.</p>` : ''}
     </section>
     <section class="card">
       <h2>Timeline</h2>
@@ -331,19 +336,25 @@ function taskRow(t) {
 }
 
 function renderRunbar() {
-  const r = S.settings?.running;
-  if (!r) { runEl.innerHTML = ''; runEl.hidden = true; document.title = 'Daily Task List'; return; }
-  const cat = catById(r.cat);
+  const runs = S.settings?.running || [];
+  if (!runs.length) { runEl.innerHTML = ''; runEl.hidden = true; document.title = 'Daily Task List'; return; }
+  const now = Date.now();
   runEl.hidden = false;
-  runEl.style.setProperty('--cc', catColor(cat));
   runEl.innerHTML = `
-    <button class="run-info" data-action="goto-running">
-      <span class="pulse" aria-hidden="true"></span>
-      <span class="run-text">${esc(r.text)}</span>
-      <span class="run-cat">${esc(cat.name)}${r.date !== M.todayKey() ? ` · ${esc(M.dayLabel(r.date))}` : ''}</span>
-    </button>
-    <span class="run-clock" id="run-clock">${M.fmtClock(r.base + Date.now() - r.s)}</span>
-    <button class="play on" data-action="stop-running" aria-label="Pause timer">${PAUSE}</button>`;
+    ${runs.length > 1 ? `<div class="run-head">${runs.length} timers running<button class="linkish" data-action="stop-all">Stop all</button></div>` : ''}
+    ${runs.map(r => {
+      const cat = catById(r.cat);
+      return `
+        <div class="run" style="${catVars(cat)}" data-id="${esc(r.id)}">
+          <button class="run-info" data-action="goto-running" data-id="${esc(r.id)}">
+            <span class="pulse" aria-hidden="true"></span>
+            <span class="run-text">${esc(r.text)}</span>
+            <span class="run-cat">${esc(cat.name)}${r.date !== M.todayKey() ? ` · ${esc(M.dayLabel(r.date))}` : ''}</span>
+          </button>
+          <span class="run-clock" data-clock="${esc(r.id)}">${M.fmtClock(r.base + now - r.s)}</span>
+          <button class="play on" data-action="stop-running" data-id="${esc(r.id)}" aria-label="Pause ${esc(r.text)}">${PAUSE}</button>
+        </div>`;
+    }).join('')}`;
 }
 
 function statsView() {
@@ -430,29 +441,35 @@ function settingsView() {
 // Live-update only the ticking numbers, once a second.
 function tick() {
   if (M.todayKey() !== S.today) rollOver();
-  const r = S.settings?.running;
-  if (!r) return;
-  const elapsed = Date.now() - r.s;
-  if (elapsed >= LONG_TIMER_MS && S.longAsked !== r.s) {
-    S.longAsked = r.s;
-    const msg = `"${r.text}" has been running for ${M.fmtDur(r.base + elapsed)}. Still going?`;
-    notify('Timer still running', msg);
-    ask(msg, `Stop at ${M.fmtDur(LONG_TIMER_MS)}`, () => stopRunning(r.s + LONG_TIMER_MS));
-  }
+  const runs = S.settings?.running || [];
+  if (!runs.length) return;
   const now = Date.now();
-  const clock = M.fmtClock(r.base + now - r.s);
-  const el = $('#run-clock');
-  if (el) el.textContent = clock;
-  document.title = `▶ ${clock} · ${r.text}`;
 
-  if (S.view === 'day' && r.date === S.date) {
-    const t = findTask(r.id);
-    if (!t) return;
-    const ms = M.taskMs(t, now);
-    const live = viewEl.querySelector(`[data-live="${r.id}"]`);
-    if (live) live.textContent = M.fmtDur(ms);
-    const bar = viewEl.querySelector(`[data-live-bar="${r.id}"]`);
-    if (bar && t.target) bar.style.width = `${Math.min(100, (ms / (t.target * 60000)) * 100)}%`;
+  for (const r of runs) {
+    const elapsed = now - r.s;
+    if (elapsed >= LONG_TIMER_MS && S.longAsked !== r.s) {
+      S.longAsked = r.s;
+      const msg = `"${r.text}" has been running for ${M.fmtDur(r.base + elapsed)}. Still going?`;
+      notify('Timer still running', msg);
+      ask(msg, `Stop at ${M.fmtDur(LONG_TIMER_MS)}`, () => stopRunning(r.id, r.s + LONG_TIMER_MS));
+    }
+    const clock = M.fmtClock(r.base + now - r.s);
+    const el = runEl.querySelector(`[data-clock="${r.id}"]`);
+    if (el) el.textContent = clock;
+    if (S.view === 'day' && r.date === S.date) {
+      const t = findTask(r.id);
+      const ms = t ? M.taskMs(t, now) : 0;
+      const live = viewEl.querySelector(`[data-live="${r.id}"]`);
+      if (live) live.textContent = M.fmtDur(ms);
+      const bar = viewEl.querySelector(`[data-live-bar="${r.id}"]`);
+      if (bar && t?.target) bar.style.width = `${Math.min(100, (ms / (t.target * 60000)) * 100)}%`;
+    }
+  }
+  document.title = runs.length > 1
+    ? `▶ ${runs.length} timers running`
+    : `▶ ${M.fmtClock(runs[0].base + now - runs[0].s)} · ${runs[0].text}`;
+
+  if (S.view === 'day' && runs.some(r => r.date === S.date)) {
     const { total, byCat } = dayTotals(now);
     const tot = $('#day-total');
     if (tot) tot.textContent = M.fmtDur(total);
@@ -469,21 +486,23 @@ async function rollOver() {
   const prev = S.today;
   const today = M.todayKey();
   S.today = today;
-  const r = S.settings?.running;
-  if (S.settings && r && r.date === prev) {
+  const runs = (S.settings?.running || []).filter(r => r.date === prev);
+  if (S.settings && runs.length) {
     const midnight = M.parseKey(today).getTime();
-    await stopRunning(midnight);
-    let id = null, base = 0;
-    await mutateDay(today, d => {
-      let x = d.tasks.find(t => M.normText(t.text) === M.normText(r.text));
-      if (!x) { x = M.newTask(r.text, r.cat); d.tasks.push(x); }
-      base = M.taskMs(x, midnight);
-      x.sessions.push({ s: midnight, e: null });
-      id = x.id;
-    });
-    S.settings.running = { date: today, id, text: r.text, cat: r.cat, base, s: midnight };
+    await stopRunning(null, midnight);
+    for (const r of runs) {
+      let id = null, base = 0;
+      await mutateDay(today, d => {
+        let x = d.tasks.find(t => M.normText(t.text) === M.normText(r.text));
+        if (!x) { x = M.newTask(r.text, r.cat); d.tasks.push(x); }
+        base = M.taskMs(x, midnight);
+        x.sessions.push({ s: midnight, e: null });
+        id = x.id;
+      });
+      S.settings.running.push({ date: today, id, text: r.text, cat: r.cat, base, s: midnight });
+    }
     saveSettings();
-    toast('New day: the running timer continues here');
+    toast(`New day: ${runs.length > 1 ? 'the running timers continue' : 'the running timer continues'} here`);
   }
   if (S.date === prev) openDay(today); else render();
 }
@@ -665,7 +684,7 @@ function openSheet(id) {
     }
     if (act === 'cancel') sheet.close();
     if (act === 'delete') {
-      if (isRunningTask(id)) await stopRunning();
+      if (isRunningTask(id)) await stopRunning(id);
       sheet.close();
       const date = S.date;
       const gone = structuredClone(findTask(id));
@@ -674,7 +693,7 @@ function openSheet(id) {
       ask(`Deleted “${gone.text}”`, 'Undo', () => mutateDay(date, d => { d.tasks.splice(at, 0, gone); }));
     }
     if (act === 'backlog') {
-      if (isRunningTask(id)) await stopRunning();
+      if (isRunningTask(id)) await stopRunning(id);
       S.settings.backlog.unshift({ id: M.uid(), text: t.text, cat: t.cat });
       saveSettings();
       sheet.close();
@@ -706,7 +725,8 @@ function openSheet(id) {
     const live = cur.sessions.filter(s => liveStarts.has(s.s));
     const sessions = M.tidySessions([...closed, ...live]);
     Object.assign(cur, { text, cat, target, repeat: form.elements.repeat.checked, adjust: draft.adjust, sessions });
-    if (isRunningTask(id)) Object.assign(S.settings.running, { text, cat, base: M.taskMs({ ...cur, sessions: cur.sessions.slice(0, -1) }) });
+    const run = runFor(id);
+    if (run) Object.assign(run, { text, cat, base: M.taskMs({ ...cur, sessions: cur.sessions.slice(0, -1) }) });
     render();
     saveDay();
     saveSettings();
@@ -887,7 +907,7 @@ document.addEventListener('click', async e => {
     case 'toggle-done': {
       const t = findTask(id);
       if (!t) break;
-      if (!t.done && isRunningTask(id)) await stopRunning();
+      if (!t.done && isRunningTask(id)) await stopRunning(id);
       await mutateDay(S.date, d => { const x = d.tasks.find(x => x.id === id); x.done = !x.done; });
       // Checked off without any logged time: ask when it happened.
       const x = findTask(id);
@@ -895,13 +915,16 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'toggle-timer':
-      if (isRunningTask(id)) await stopRunning(); else await startTimer(id);
+      if (isRunningTask(id)) await stopRunning(id); else await startTimer(id);
       break;
-    case 'stop-running': await stopRunning(); break;
-    case 'goto-running':
+    case 'stop-running': await stopRunning(el.dataset.id); break;
+    case 'stop-all': await stopRunning(); break;
+    case 'goto-running': {
+      const r = S.settings.running.find(x => x.id === el.dataset.id) || S.settings.running[0];
       if (S.view !== 'day') S.view = 'day';
-      if (S.settings.running.date !== S.date) openDay(S.settings.running.date); else render();
+      if (r && r.date !== S.date) openDay(r.date); else render();
       break;
+    }
     case 'edit': openSheet(id); break;
     case 'session-del': {
       const taskId = el.dataset.task, start = +el.dataset.s;
@@ -1061,7 +1084,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (!S.sel || !ids.includes(S.sel)) return;
-  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); isRunningTask(S.sel) ? stopRunning() : startTimer(S.sel); }
+  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); isRunningTask(S.sel) ? stopRunning(S.sel) : startTimer(S.sel); }
   if (e.key === 'e') { e.preventDefault(); openSheet(S.sel); }
   if (e.key === 'x') { e.preventDefault(); viewEl.querySelector(`.task[data-id="${S.sel}"] .check`)?.click(); }
 });

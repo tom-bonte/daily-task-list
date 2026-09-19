@@ -126,10 +126,7 @@ kbd {
   padding: 18px 12px;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; padding: 4px 10px 18px; }
-.brand-mark {
-  width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
-  background: var(--accent); color: #fff; font-size: 15px;
-}
+.brand-mark { width: 26px; height: 26px; object-fit: contain; }
 #tabs button {
   display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px;
   border-radius: 9px; color: var(--ink-2); font-size: 14px; text-align: left;
@@ -145,10 +142,14 @@ kbd {
 /* running timer, pinned in the sidebar */
 #runbar {
   position: fixed; left: 12px; bottom: 44px; width: calc(var(--sidebar) - 24px); z-index: 11;
-  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 8px;
-  background: var(--bg); border: 1px solid var(--ring); border-radius: 12px; padding: 10px 10px 10px 12px;
-  border-left: 3px solid var(--cc);
+  display: grid; gap: 8px;
+  background: var(--bg); border: 1px solid var(--ring); border-radius: 12px; padding: 8px;
 }
+#runbar .run {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 8px;
+  border-left: 3px solid var(--cc); padding: 4px 4px 4px 9px; border-radius: 4px;
+}
+.run-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 0 4px; }
 #runbar[hidden] { display: none; }
 .run-info { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; text-align: left; align-items: center; }
 .run-text { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
@@ -182,6 +183,9 @@ kbd {
 .tile-value { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tiles.compact .tile-value { font-size: 19px; }
 .tile-sub { font-size: 12px; color: var(--ink-2); min-height: 1em; }
+.warn { color: #b06a00; }
+:root:not([data-theme="light"]) .warn { color: var(--c4); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .warn { color: #b06a00; } }
 
 /* ---------- day view ---------- */
 .day-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
@@ -441,8 +445,9 @@ button.stat-row:hover { background: var(--surface-2); }
   #tabs button[aria-current="page"] { color: var(--accent); }
   #runbar {
     left: 8px; right: 8px; width: auto; bottom: calc(var(--nav-h) + 8px + env(safe-area-inset-bottom));
-    grid-template-columns: 1fr auto auto; padding: 6px 6px 6px 12px; box-shadow: var(--shadow); background: var(--surface);
+    box-shadow: var(--shadow); background: var(--surface);
   }
+  #runbar .run { grid-template-columns: 1fr auto auto; }
   .run-info { grid-column: auto; }
   .run-clock { font-size: 18px; }
   #toast, #ask { left: 50%; }

@@ -1,6 +1,6 @@
 // Offline shell: serve the app from cache, refresh it in the background.
-const CACHE = 'dtl-shell-v1';
-const SHELL = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/app.js', 'js/model.js', 'js/stats.js', 'js/ui.js', 'js/firebase.js', 'js/local-store.js', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'dtl-shell-v2';
+const SHELL = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/app.js', 'js/model.js', 'js/stats.js', 'js/ui.js', 'js/firebase.js', 'js/local-store.js', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-32.png', 'favicon.webp'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

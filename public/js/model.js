@@ -1,6 +1,6 @@
 // Pure data logic: categories, task shape, time math, dates. No DOM, no Firebase.
 
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 export const FALLBACK_CAT = 'general';
 // 0 = gray, 1-8 = the validated palette hues, 9-16 = the same hues striped.
 export const MAX_SLOT = 16;
@@ -106,6 +106,22 @@ export function explainGuess(text, categories = DEFAULT_CATEGORIES) {
 const FILLER = new Set(['the', 'and', 'for', 'with', 'make', 'finish', 'start', 'van', 'het', 'een', 'met', 'voor', 'doen', 'maken', 'los', 'las', 'del', 'por', 'para', 'con', 'hacer']);
 export function learnableWord(text) {
   return normText(text).split(/[^\p{L}]+/u).find(w => w.length >= 3 && !FILLER.has(w)) || null;
+}
+
+// Time covered by two or more timers at once, i.e. how much of the summed
+// task time is double counted. Manual adjustments are not intervals, so they
+// are not part of this.
+export function overlapMs(tasks, now = Date.now()) {
+  const spans = [];
+  for (const t of tasks || []) for (const s of t.sessions || []) spans.push([s.s, s.e ?? now]);
+  spans.sort((a, b) => a[0] - b[0]);
+  let sum = 0, union = 0, end = -Infinity;
+  for (const [a, b] of spans) {
+    sum += b - a;
+    union += Math.max(0, b - Math.max(a, end));
+    end = Math.max(end, b);
+  }
+  return Math.max(0, sum - union);
 }
 
 // Timer hygiene: drop runs under a minute (misclicks) and merge blocks of the
@@ -292,6 +308,7 @@ export function withDefaults(s) {
     categories: s?.categories?.length ? migrateCategories(s.categories, v) : structuredClone(DEFAULT_CATEGORIES),
     backlog: s?.backlog ?? DEFAULT_BACKLOG,
     memory: s?.memory ?? {},
-    running: s?.running ?? null,
+    // v3 made this a list: several timers can run at once.
+    running: Array.isArray(s?.running) ? s.running : (s?.running ? [s.running] : []),
   };
 }
