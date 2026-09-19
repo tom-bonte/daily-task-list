@@ -3,6 +3,11 @@
   publish = "public"
   command = "echo 'No build step'"
 
+[build.environment]
+  # The Firebase web apiKey is a public identifier (access is enforced by
+  # firestore.rules), so exempt exactly that value from secret scanning.
+  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyBQth3C5dlha644oF5hyTjKDPdaIfWk-7o"
+
 # Always revalidate app code so a new push shows up on the next reload.
 [[headers]]
   for = "/*"
