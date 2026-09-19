@@ -1,14 +1,31 @@
 // Small shared UI helpers.
 import { parseKey, fmtDur, fmtTime, FALLBACK_CAT } from './model.js';
 
-export const SLOT_NAMES = ['Gray', 'Blue', 'Orange', 'Aqua', 'Yellow', 'Pink', 'Green', 'Violet', 'Red'];
+const HUES = ['Blue', 'Orange', 'Aqua', 'Yellow', 'Pink', 'Green', 'Violet', 'Red'];
+// Slot 0 = gray, 1-8 = palette hues, 9-16 = the same hues striped, so no two
+// categories share a look without going past the 8 colorblind-safe hues.
+export const SLOT_NAMES = ['Gray', ...HUES, ...HUES.map(h => `${h} striped`)];
 
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 export function catColor(cat) {
-  return `var(--c${cat?.slot ?? 0})`;
+  const s = cat?.slot ?? 0;
+  return `var(--c${s > 8 ? ((s - 1) % 8) + 1 : s})`;
+}
+
+// Background for marks (dots, bars, segments): solid, or hatched for slots 9-16.
+export function catFill(cat) {
+  const c = catColor(cat);
+  return (cat?.slot ?? 0) > 8
+    ? `repeating-linear-gradient(135deg, ${c} 0 2.5px, color-mix(in srgb, ${c} 30%, var(--surface)) 2.5px 5px)`
+    : c;
+}
+
+// Inline style vars: --cc (solid hue, for accents/borders) and --cf (mark fill).
+export function catVars(cat) {
+  return `--cc:${catColor(cat)};--cf:${catFill(cat)}`;
 }
 
 // Horizontal strip of the day's timer sessions, plus the latest sessions as a list.
@@ -37,11 +54,11 @@ export function renderTimeline(date, tasks, categories, now = Date.now(), listMa
 
   const blocks = sessions.map(s => {
     const label = `${s.text} · ${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)} (${fmtDur(s.b - s.a)})`;
-    return `<span class="tl-block ${s.live ? 'live' : ''}" style="left:${pos(hour(s.a))}%;width:${pos(hour(s.b)) - pos(hour(s.a))}%;background:${catColor(s.cat)}" title="${esc(label)}"></span>`;
+    return `<span class="tl-block ${s.live ? 'live' : ''}" style="left:${pos(hour(s.a))}%;width:${pos(hour(s.b)) - pos(hour(s.a))}%;background:${catFill(s.cat)}" title="${esc(label)}"></span>`;
   }).join('');
 
   const list = sessions.slice(-listMax).reverse().map(s => `
-    <li style="--cc:${catColor(s.cat)}">
+    <li style="${catVars(s.cat)}">
       <span class="dot"></span>
       <span class="tl-time">${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)}</span>
       <span class="tl-text">${esc(s.text)}</span>

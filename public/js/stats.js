@@ -1,6 +1,6 @@
 // Statistics: aggregation (pure) + HTML rendering for the Stats view.
 import { taskMs, normText, periodRange, periodLabel, addDays, parseKey, dayLabel, fmtDur, fmtMin, todayKey, FALLBACK_CAT } from './model.js';
-import { esc, catColor, renderTimeline } from './ui.js';
+import { esc, catVars, catFill, renderTimeline } from './ui.js';
 
 export const RANGES = [['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']];
 
@@ -110,7 +110,7 @@ export function renderStats(st, categories, expanded, days = []) {
             <tbody>${rows.slice(0, 60).map(t => {
               const cat = catById[t.cat];
               const pct = t.target ? Math.min(100, (t.ms / (t.target * 60000)) * 100) : null;
-              return `<tr style="--cc:${catColor(cat)}">
+              return `<tr style="${catVars(cat)}">
                 <td>${esc(t.text)}${t.done ? ' <span class="muted">✓</span>' : ''}</td>
                 <td><span class="dot"></span> ${esc(cat?.name || '')}</td>
                 ${isDay ? '' : `<td class="num">${t.days.size || '–'}</td>`}
@@ -137,7 +137,7 @@ export function categoryBars(st, expanded, interactive) {
       <li class="stat-task"><span class="stat-task-text">${esc(t.text)}</span><span class="stat-task-val">${fmtDur(t.ms)}</span></li>`).join('') : '';
     return `
       <li>
-        <${Tag} class="stat-row ${interactive ? '' : 'static'}" ${interactive ? `data-action="stats-toggle" data-cat="${esc(cat.id)}" aria-expanded="${open}"` : ''} style="--cc:${catColor(cat)}">
+        <${Tag} class="stat-row ${interactive ? '' : 'static'}" ${interactive ? `data-action="stats-toggle" data-cat="${esc(cat.id)}" aria-expanded="${open}"` : ''} style="${catVars(cat)}">
           <span class="stat-name"><span class="dot"></span><span class="emoji">${esc(cat.emoji || '')}</span><span class="ellipsis">${esc(cat.name)}</span></span>
           <span class="bar-track"><span class="bar" style="width:${(ms / maxCat) * 100}%"></span></span>
           <span class="stat-val">${fmtDur(ms)}</span>
@@ -169,7 +169,7 @@ function chart(st, categories, catById) {
 
   const cols = st.buckets.map((b, i) => {
     const segs = categories.filter(c => b.byCat[c.id]).map(c =>
-      `<span class="seg-fill" style="flex-grow:${b.byCat[c.id]};background:${catColor(c)}"></span>`).join('');
+      `<span class="seg-fill" style="flex-grow:${b.byCat[c.id]};background:${catFill(c)}"></span>`).join('');
     const current = st.kind === 'year' ? today.startsWith(b.key) : b.key === today;
     return `
       <div class="col ${current ? 'current' : ''}" data-bucket="${i}" tabindex="0" aria-label="${esc(bucketName(st.kind, b.key))}: ${fmtDur(b.total)}">
@@ -184,7 +184,7 @@ function chart(st, categories, catById) {
   return `
     <section class="card">
       <h2>${st.kind === 'year' ? 'Per month' : 'Per day'}</h2>
-      <ul class="legend">${present.map(c => `<li style="--cc:${catColor(c)}"><span class="swatch"></span>${esc(c.name)}</li>`).join('')}</ul>
+      <ul class="legend">${present.map(c => `<li style="${catVars(c)}"><span class="swatch"></span>${esc(c.name)}</li>`).join('')}</ul>
       <div class="chart">
         <div class="grid">${ticks.map(h => `<div class="gridline" style="bottom:${(h / top) * 100}%"><span>${h}h</span></div>`).join('')}</div>
         <div class="cols ${st.buckets.length > 14 ? 'dense' : ''}">${cols}</div>

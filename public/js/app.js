@@ -1,6 +1,6 @@
 import * as M from './model.js';
 import { computeStats, renderStats, categoryBars, bucketName } from './stats.js';
-import { esc, catColor, renderTimeline, SLOT_NAMES } from './ui.js';
+import { esc, catColor, catFill, catVars, renderTimeline, SLOT_NAMES } from './ui.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 
@@ -58,7 +58,8 @@ function start() {
   S.unsub.push(S.store.watchSettings(s => {
     const first = !S.settings;
     S.settings = M.withDefaults(s);
-    if (!s) saveSettings(); // first run: persist the preset categories + backlog
+    // First run, or settings from an older version: persist the defaults / migration.
+    if (!s || (s.v ?? 1) < M.SETTINGS_VERSION) saveSettings();
     if (first || !sheet.open) render(); else renderRunbar();
   }));
   openDay(S.date);
@@ -193,7 +194,7 @@ function dayView() {
     const items = tasks.filter(t => catById(t.cat).id === cat.id);
     if (!items.length) return '';
     return `
-      <section class="catsec" style="--cc:${catColor(cat)}">
+      <section class="catsec" style="${catVars(cat)}">
         <h2><span class="dot"></span><span class="emoji">${esc(cat.emoji || '')}</span>${esc(cat.name)}
           <span class="cat-total" data-cat-total="${esc(cat.id)}">${byCat[cat.id] ? M.fmtDur(byCat[cat.id]) : ''}</span></h2>
         <ul class="tasks">${items.map(taskRow).join('')}</ul>
@@ -207,7 +208,7 @@ function dayView() {
       <div class="empty">
         <p>No plan for ${rel ? rel.toLowerCase() : esc(M.dayLabel(S.date))} yet.</p>
         ${last?.tasks?.length ? `<button class="primary" data-action="copy-last">Start from ${esc(M.dayLabel(last.date))}</button>
-          <p class="muted small">Copies repeating and unfinished tasks.</p>` : '<p class="muted small">Add your first task above.</p>'}
+          <p class="muted small">Copies the tasks marked "repeat daily".</p>` : '<p class="muted small">Add your first task above.</p>'}
       </div>`;
   }
 
@@ -251,11 +252,10 @@ function dayView() {
     </div>`;
 }
 
-// Right-hand panel of the day view: live category split, timeline, backlog.
+// Right-hand panel of the day view: live category split and timeline.
 function railHtml(now = Date.now()) {
   const cats = S.settings.categories;
   const st = computeStats(S.day ? [{ ...S.day, date: S.date }] : [], cats, 'day', S.date, now);
-  const backlog = S.settings.backlog.slice(0, 5);
   return `
     <section class="card">
       <div class="card-head"><h2>Time by category</h2><button class="linkish" data-action="day-stats">Stats →</button></div>
@@ -265,14 +265,7 @@ function railHtml(now = Date.now()) {
       <h2>Timeline</h2>
       ${renderTimeline(S.date, S.day?.tasks, cats, now)}
     </section>
-    <section class="card">
-      <div class="card-head"><h2>Wachtruimte</h2><button class="linkish" data-action="view" data-view="backlog">All ${S.settings.backlog.length} →</button></div>
-      ${backlog.length ? `<ul class="mini-backlog">${backlog.map(b => `
-        <li data-id="${b.id}" style="--cc:${catColor(catById(b.cat))}">
-          <span class="dot"></span><span class="task-text">${esc(b.text)}</span>
-          <button class="icon small" data-action="backlog-to-day" aria-label="Add ${esc(b.text)} to this day" title="Add to this day">+</button>
-        </li>`).join('')}</ul>` : '<p class="muted-note">Empty.</p>'}
-    </section>`;
+`;
 }
 
 const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
@@ -339,7 +332,7 @@ function backlogView() {
       ${items.map(b => {
         const cat = catById(b.cat);
         return `
-          <li data-id="${b.id}" style="--cc:${catColor(cat)}">
+          <li data-id="${b.id}" style="${catVars(cat)}">
             <span class="dot"></span>
             <span class="task-text">${esc(b.text)}<span class="muted small"> · ${esc(cat.name)}</span></span>
             <button class="ghost" data-action="backlog-to-day">→ ${esc(target)}</button>
@@ -355,18 +348,25 @@ function settingsView() {
     <header class="viewhead"><h1>Settings</h1></header>
     <section class="card">
       <h2>Categories</h2>
-      <p class="muted small">New tasks are sorted automatically based on their words. When you change a task's category, the app remembers it next time.
-        Tasks that fit nowhere go to <strong>${esc(catById(M.FALLBACK_CAT).name)}</strong>.</p>
+      <p class="muted small">New tasks are sorted by their words: the keyword that appears first in the task wins, and a category's own name always counts.
+        Separate keywords with commas; end one with * to match word endings (swim* → swimming). When you change a task's category by hand, the app remembers it.
+        Tasks that fit nowhere go to <strong>${esc(catById(M.FALLBACK_CAT).name)}</strong>. Picking a color that's taken swaps it with that category.</p>
       <ul class="cat-edit">
         ${cats.map(c => `
-          <li data-cat="${esc(c.id)}" style="--cc:${catColor(c)}">
-            <input class="emoji" data-change="cat-field" data-field="emoji" value="${esc(c.emoji || '')}" aria-label="Emoji">
-            <input data-change="cat-field" data-field="name" value="${esc(c.name)}" aria-label="Name">
-            <span class="dot"></span>
-            <select data-change="cat-field" data-field="slot" aria-label="Color">
-              ${SLOT_NAMES.map((n, i) => `<option value="${i}" ${i === (c.slot ?? 0) ? 'selected' : ''}>${n}</option>`).join('')}
-            </select>
-            ${c.id === M.FALLBACK_CAT ? '<span class="icon"></span>' : `<button class="icon" data-action="cat-del" aria-label="Delete ${esc(c.name)}">×</button>`}
+          <li data-cat="${esc(c.id)}" style="${catVars(c)}">
+            <div class="cat-edit-row">
+              <input class="emoji" data-change="cat-field" data-field="emoji" value="${esc(c.emoji || '')}" aria-label="Emoji">
+              <input data-change="cat-field" data-field="name" value="${esc(c.name)}" aria-label="Name">
+              <span class="dot"></span>
+              <select data-change="cat-field" data-field="slot" aria-label="Color">
+                ${SLOT_NAMES.map((n, i) => {
+                  const owner = cats.find(o => o.id !== c.id && (o.slot ?? 0) === i && i !== 0);
+                  return `<option value="${i}" ${i === (c.slot ?? 0) ? 'selected' : ''}>${n}${owner ? ` · ${esc(owner.name)}` : ''}</option>`;
+                }).join('')}
+              </select>
+              ${c.id === M.FALLBACK_CAT ? '<span class="icon"></span>' : `<button class="icon" data-action="cat-del" aria-label="Delete ${esc(c.name)}">×</button>`}
+            </div>
+            ${c.id === M.FALLBACK_CAT ? '' : `<input class="keywords" data-change="cat-field" data-field="keywords" value="${esc((c.keywords || []).join(', '))}" placeholder="Keywords, e.g. run, gym, swim*" aria-label="Keywords for ${esc(c.name)}">`}
           </li>`).join('')}
       </ul>
       <button class="ghost" data-action="cat-add">+ Add category</button>
@@ -430,11 +430,28 @@ function showView(view) {
 
 // ---------------- edit sheet ----------------
 
+function sessionsHtml(sessions) {
+  return sessions.map((s, i) => `
+    <li>
+      <span>${M.fmtTime(s.s)} – ${s.e ? M.fmtTime(s.e) : 'now'}</span>
+      <span class="muted">${M.fmtDur((s.e ?? Date.now()) - s.s)}</span>
+      ${s.e ? `<button type="button" class="icon small" data-sess-del="${i}" aria-label="Remove this time block">×</button>` : '<span class="muted small">running</span>'}
+    </li>`).join('');
+}
+
+function timeInputs(key, minutes) {
+  const { from, to } = M.suggestBlock(key, minutes);
+  return `
+    <label>From<input type="time" name="from" value="${from}" required></label>
+    <label>To<input type="time" name="to" value="${to}" required></label>`;
+}
+
 function openSheet(id) {
   const t = findTask(id);
   if (!t) return;
-  const draft = { adjust: t.adjust || 0 };
-  const sessions = t.sessions.map(s => `<li>${M.fmtTime(s.s)} – ${s.e ? M.fmtTime(s.e) : 'now'}<span class="muted"> · ${M.fmtDur((s.e ?? Date.now()) - s.s)}</span></li>`).join('');
+  const date = S.date;
+  const draft = { adjust: t.adjust || 0, sessions: structuredClone(t.sessions) };
+  const draftMs = () => M.taskMs({ sessions: draft.sessions, adjust: draft.adjust });
   sheet.innerHTML = `
     <form class="sheet-form">
       <h3>Edit task</h3>
@@ -445,12 +462,19 @@ function openSheet(id) {
         <label class="check-label"><input type="checkbox" name="repeat" ${t.repeat ? 'checked' : ''}> Repeat daily</label>
       </div>
       <div class="timebox">
-        <div>Time spent <strong id="sheet-time">${M.fmtDur(M.taskMs(t))}</strong></div>
+        <div class="timebox-head">Time spent <strong id="sheet-time">${M.fmtDur(draftMs())}</strong></div>
+        <ul class="sessions" id="sheet-sessions">${sessionsHtml(draft.sessions)}</ul>
+        <div class="addblock">
+          <span class="small">Forgot the timer? Add when you did it:</span>
+          <div class="addblock-row">
+            ${timeInputs(date, t.target).replaceAll('required', '').replace('name="from"', 'name="bfrom"').replace('name="to"', 'name="bto"')}
+            <button type="button" class="ghost" data-sheet="addblock">Add block</button>
+          </div>
+        </div>
         <div class="adj">
+          <span class="small muted">Quick adjust</span>
           ${[-15, -5, 5, 15].map(m => `<button type="button" class="ghost" data-adj="${m}">${m > 0 ? '+' : '−'}${Math.abs(m)}m</button>`).join('')}
         </div>
-        <p class="muted small">Forgot the timer? Add the time here.</p>
-        ${sessions ? `<ul class="sessions">${sessions}</ul>` : ''}
       </div>
       <div class="sheet-actions">
         <button type="button" class="ghost danger" data-sheet="delete">Delete</button>
@@ -469,17 +493,32 @@ function openSheet(id) {
   textIn.addEventListener('input', () => {
     if (!targetTouched && (t.target ?? null) === parsedAtOpen) targetIn.value = M.parseTarget(textIn.value) ?? '';
   });
+  const refreshTime = () => {
+    $('#sheet-time').textContent = M.fmtDur(draftMs());
+    $('#sheet-sessions').innerHTML = sessionsHtml(draft.sessions);
+  };
 
   sheet.onclick = async e => {
     if (e.target === sheet) return sheet.close();
     const adj = e.target.closest('[data-adj]');
     if (adj) {
-      const base = M.taskMs({ ...t, adjust: 0 });
+      const base = M.taskMs({ sessions: draft.sessions });
       draft.adjust = Math.max(-base, draft.adjust + (+adj.dataset.adj) * 60000);
-      $('#sheet-time').textContent = M.fmtDur(base + draft.adjust);
-      return;
+      return refreshTime();
+    }
+    const del = e.target.closest('[data-sess-del]');
+    if (del) {
+      draft.sessions.splice(+del.dataset.sessDel, 1);
+      return refreshTime();
     }
     const act = e.target.closest('[data-sheet]')?.dataset.sheet;
+    if (act === 'addblock') {
+      const block = M.blockFromTimes(date, form.elements.bfrom.value, form.elements.bto.value);
+      if (!block) return toast('Pick a start and end time');
+      const open = draft.sessions.filter(s => s.e == null);
+      draft.sessions = [...draft.sessions.filter(s => s.e != null), block].sort((a, b) => a.s - b.s).concat(open);
+      return refreshTime();
+    }
     if (act === 'cancel') sheet.close();
     if (act === 'delete') {
       if (isRunningTask(id)) await stopRunning();
@@ -508,7 +547,13 @@ function openSheet(id) {
     const cat = form.elements.cat.value;
     if (cat !== cur.cat) S.settings.memory[M.normText(text)] = cat;
     const target = targetIn.value === '' ? null : Math.max(0, Math.round(+targetIn.value));
-    Object.assign(cur, { text, cat, target, repeat: form.elements.repeat.checked, adjust: draft.adjust });
+    // Closed sessions come from the draft; a session that was running when the
+    // sheet opened keeps its live state. The open session must stay last.
+    const liveStarts = new Set(t.sessions.filter(s => s.e == null).map(s => s.s));
+    const closed = draft.sessions.filter(s => s.e != null && !liveStarts.has(s.s));
+    const live = cur.sessions.filter(s => liveStarts.has(s.s));
+    const sessions = [...closed, ...live.filter(s => s.e != null)].sort((a, b) => a.s - b.s).concat(live.filter(s => s.e == null));
+    Object.assign(cur, { text, cat, target, repeat: form.elements.repeat.checked, adjust: draft.adjust, sessions });
     if (isRunningTask(id)) Object.assign(S.settings.running, { text, cat, base: M.taskMs({ ...cur, sessions: cur.sessions.slice(0, -1) }) });
     render();
     saveDay();
@@ -516,6 +561,50 @@ function openSheet(id) {
   };
   sheet.onclose = () => render();
   sheet.showModal();
+}
+
+// Shown after checking off a planned task that never had a timer running.
+function openLogTime(id) {
+  const t = findTask(id);
+  if (!t) return;
+  const date = S.date;
+  sheet.innerHTML = `
+    <form class="sheet-form">
+      <h3>Log time?</h3>
+      <p class="muted">No timer ran for <strong>${esc(t.text)}</strong>. When did you do it?</p>
+      <div class="sheet-row times">${timeInputs(date, t.target)}<span class="muted" id="log-dur"></span></div>
+      <div class="sheet-actions">
+        <span class="spacer"></span>
+        <button type="button" class="ghost" data-sheet="skip">Skip</button>
+        <button class="primary">Log time</button>
+      </div>
+    </form>`;
+  const form = sheet.querySelector('form');
+  const showDur = () => {
+    const b = M.blockFromTimes(date, form.elements.from.value, form.elements.to.value);
+    $('#log-dur').textContent = b ? M.fmtDur(b.e - b.s) : '';
+  };
+  form.addEventListener('input', showDur);
+  showDur();
+  sheet.onclick = e => {
+    if (e.target === sheet || e.target.closest('[data-sheet=skip]')) sheet.close();
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const block = M.blockFromTimes(date, form.elements.from.value, form.elements.to.value);
+    if (!block) return toast('Pick a start and end time');
+    sheet.close();
+    await mutateDay(date, d => {
+      const x = d.tasks.find(x => x.id === id);
+      if (!x) return;
+      const open = x.sessions.filter(s => s.e == null);
+      x.sessions = [...x.sessions.filter(s => s.e != null), block].sort((a, b) => a.s - b.s).concat(open);
+    });
+    toast(`Logged ${M.fmtDur(block.e - block.s)}`);
+  };
+  sheet.onclose = () => render();
+  sheet.showModal();
+  form.elements.from.focus();
 }
 
 // ---------------- stats tooltip ----------------
@@ -534,6 +623,7 @@ function showTip(col) {
     const row = document.createElement('div');
     row.className = 'tip-row';
     row.style.setProperty('--cc', catColor(c));
+    row.style.setProperty('--cf', catFill(c));
     const key = document.createElement('span'); key.className = 'tip-key';
     const val = document.createElement('strong'); val.textContent = M.fmtDur(b.byCat[c.id]);
     const name = document.createElement('span'); name.textContent = c.name;
@@ -601,6 +691,9 @@ document.addEventListener('click', async e => {
       if (!t) break;
       if (!t.done && isRunningTask(id)) await stopRunning();
       await mutateDay(S.date, d => { const x = d.tasks.find(x => x.id === id); x.done = !x.done; });
+      // Checked off a planned task without ever timing it: offer to log when it happened.
+      const x = findTask(id);
+      if (x?.done && x.target && !M.taskMs(x)) openLogTime(id);
       break;
     }
     case 'toggle-timer':
@@ -653,9 +746,7 @@ document.addEventListener('click', async e => {
       break;
     }
     case 'cat-add': {
-      const used = new Set(S.settings.categories.map(c => c.slot));
-      const slot = [1, 2, 3, 4, 5, 6, 7, 8].find(s => !used.has(s)) ?? 0;
-      S.settings.categories.push({ id: M.uid(), name: 'New category', emoji: '⭐', slot });
+      S.settings.categories.push({ id: M.uid(), name: 'New category', emoji: '⭐', slot: M.freeSlot(S.settings.categories), keywords: [] });
       saveSettings(); render();
       break;
     }
@@ -679,8 +770,9 @@ document.addEventListener('submit', async e => {
   e.preventDefault();
   const text = form.elements.text.value.trim();
   if (!text) return;
-  const cat = form.elements.cat.value;
   const touched = !!form.elements.cat.dataset.touched;
+  // Unless a category was picked by hand, guess from the final text.
+  const cat = touched ? form.elements.cat.value : M.guessCategory(text, S.settings.memory, S.settings.categories);
   if (touched) S.settings.memory[M.normText(text)] = cat;
   form.elements.text.value = '';
   delete form.elements.cat.dataset.touched;
@@ -733,7 +825,18 @@ document.addEventListener('change', e => {
   if (kind === 'pick-day' && el.value) openDay(el.value);
   if (kind === 'cat-field') {
     const cat = S.settings.categories.find(c => c.id === el.closest('[data-cat]').dataset.cat);
-    cat[el.dataset.field] = el.dataset.field === 'slot' ? +el.value : el.value;
+    const field = el.dataset.field;
+    if (field === 'slot') {
+      const slot = +el.value;
+      const owner = S.settings.categories.find(o => o !== cat && o.slot === slot && slot !== 0);
+      if (owner) owner.slot = cat.slot ?? 0; // swap so colors stay unique
+      cat.slot = slot;
+    } else if (field === 'keywords') {
+      cat.keywords = [...new Set(el.value.split(',').map(k => k.trim().toLowerCase()).filter(Boolean))];
+    } else {
+      cat[field] = el.value;
+      if (field === 'name' && !cat.keywords?.length) cat.keywords = M.presetKeywordsFor({ name: el.value });
+    }
     saveSettings(); render();
   }
 });
