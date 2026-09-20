@@ -70,6 +70,11 @@ The database is locked to one account. `firestore.rules` reads `/config/owner`; 
 - The web `apiKey` is public. Security comes from `firestore.rules`, which gives each user access only to `users/{uid}/**`.
 - Chart colors use a validated categorical palette (CSS vars `--c1..--c8`, `--c0` gray) with separate light and dark steps. More hues fail the colorblind checks, so categories beyond 8 use the striped variants rather than new colors. Marks use `var(--cf)`.
 
+## macOS extras
+
+- `menubar/` is a small Swift menu bar app (`./menubar/build.sh` → `~/Applications/Habits Rabbits Menu.app`). It keeps no state: each item runs `open -g -a <web app> <site>?…`, which the web app turns into an action via `applyLaunchParams` (`?do=stop`, `?view=…`, `?date=today|tomorrow|YYYY-MM-DD`). Launch commands run after the **day** loads, not just settings, or the running timers are not known yet. The menu bar glyph comes from `npm run menubar-icon` (black silhouette + alpha, drawn as a template image).
+- ⌥Space activates the web app, via a BetterTouchTool keyboard trigger; the sidebar footer shows that shortcut on Mac only.
+
 ## How the user plans (product context)
 
 The app follows the user's Notes habit. Each evening they plan the next day by copying the previous one. Tasks are grouped under categories and many recur daily (Make plan tomorrow, Evening routine, AM run, a reading slot). Unfinished one-off tasks roll forward. Task text is free-form, in English, Dutch, or Spanish, and often starts with a duration ("2hr Shopify", "AM 1hr Read Outlander"). The user loves statistics: time per category per day, week, month, and year.

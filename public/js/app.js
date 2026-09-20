@@ -8,7 +8,7 @@ const LONG_TIMER_MS = 3 * 3600000;
 const NOTIFY_KEY = 'dtl-notify';
 
 const S = {
-  fb: null, store: null, user: null, today: M.todayKey(), longAsked: null,
+  fb: null, store: null, user: null, today: M.todayKey(), longAsked: null, launchApplied: false,
   settings: null,
   date: M.todayKey(), day: null, dayLoaded: false, lastBefore: undefined,
   view: 'day',
@@ -68,6 +68,23 @@ function renderLogin(error) {
     </div>`;
 }
 
+// Commands passed in the URL, used by the menu bar app (and handy as bookmarks):
+// ?do=stop stops every running timer, ?view=stats|day|search|backlog|settings,
+// ?date=YYYY-MM-DD|today|tomorrow opens that day.
+async function applyLaunchParams() {
+  const p = new URLSearchParams(location.search);
+  if (![...p.keys()].some(k => ['do', 'view', 'date'].includes(k))) return;
+  const date = p.get('date');
+  if (date) openDay(date === 'tomorrow' ? M.addDays(M.todayKey(), 1) : date === 'today' ? M.todayKey() : date);
+  if (p.get('do') === 'stop') {
+    const running = S.settings.running.length;
+    await stopRunning();
+    toast(running ? `Stopped ${running} timer${running > 1 ? 's' : ''}` : 'No timer was running');
+  }
+  if (p.get('view')) showView(p.get('view'));
+  history.replaceState({}, '', location.pathname + (DEMO ? '?demo' : ''));
+}
+
 function start() {
   document.body.classList.remove('logged-out');
   S.unsub.push(S.store.watchSettings(s => {
@@ -95,6 +112,7 @@ function openDay(key) {
     S.day = d;
     S.dayLoaded = true;
     reconcileRunning(d, key);
+    if (!S.launchApplied) { S.launchApplied = true; applyLaunchParams(); }
     if (!d?.tasks?.length && S.lastBefore === undefined) {
       S.lastBefore = null;
       S.store.getLastDayBefore(key).then(last => {
@@ -127,7 +145,9 @@ function saveDay() {
 
 // Apply fn to a day's data and persist it, whether or not that day is on screen.
 async function mutateDay(key, fn) {
-  if (key === S.date) {
+  // Only trust the in-memory copy once the day has actually loaded, otherwise an
+  // early action (a launch command, say) would save an empty day over real data.
+  if (key === S.date && S.dayLoaded) {
     S.day ??= { tasks: [] };
     fn(S.day);
     render();
@@ -166,8 +186,9 @@ function reconcileRunning(day, key) {
 // Stops one running timer, or all of them when no id is given.
 async function stopRunning(id = null, now = Date.now()) {
   const runs = S.settings.running.filter(r => id == null || r.id === id);
-  // Fallback: an open session on the current day that settings never recorded.
-  if (!runs.length && id && M.isRunning(findTask(id) || {})) runs.push({ date: S.date, id });
+  // Fallback for sessions settings never recorded (see reconcileRunning).
+  const strays = (S.day?.tasks || []).filter(t => M.isRunning(t) && (id == null || t.id === id) && !runs.some(r => r.id === t.id));
+  for (const t of strays) runs.push({ date: S.date, id: t.id });
   if (!runs.length) return;
   S.settings.running = S.settings.running.filter(r => !runs.includes(r));
   saveSettings();

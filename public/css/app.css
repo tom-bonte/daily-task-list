@@ -137,15 +137,15 @@ kbd {
 #tabs:hover button kbd { opacity: 1; }
 #tabs button:hover { background: var(--surface-2); color: var(--ink); }
 #tabs button[aria-current="page"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
-.nav-foot { margin-top: auto; padding: 10px 10px 0; display: grid; gap: 7px; }
+.nav-foot { padding: 0 10px 2px; display: grid; gap: 7px; }
 .nav-mail { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-hint { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); opacity: 0.75; }
 .nav-hint kbd { padding: 2px 5px; font-size: 10px; border-bottom-width: 1px; background: transparent; }
 .nav-hint span { margin-left: 2px; }
 
 /* running timer, pinned in the sidebar */
+.nav-bottom { margin-top: auto; display: grid; gap: 10px; }
 #runbar {
-  position: fixed; left: 12px; bottom: 44px; width: calc(var(--sidebar) - 24px); z-index: 11;
   display: grid; gap: 8px;
   background: var(--bg); border: 1px solid var(--ring); border-radius: 12px; padding: 8px;
 }
@@ -158,7 +158,7 @@ kbd {
 .run-info { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; text-align: left; align-items: center; }
 .run-text { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
 .run-cat { grid-column: 2; font-size: 12px; color: var(--muted); }
-.pulse { grid-row: span 2; width: 9px; height: 9px; border-radius: 50%; background: var(--cc); animation: pulse 1.6s ease-in-out infinite; }
+.pulse { grid-row: span 2; width: 9px; height: 9px; flex: none; align-self: center; justify-self: center; border-radius: 50%; background: var(--cc); animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .pulse, .tl-block.live { animation: none; } }
 .run-clock { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 22px; letter-spacing: -0.01em; }
@@ -483,10 +483,8 @@ button.stat-row:hover { background: var(--surface-2); }
   #tabs button span { flex: none; }
   #tabs button:hover, #tabs button[aria-current="page"] { background: none; }
   #tabs button[aria-current="page"] { color: var(--accent); }
-  #runbar {
-    left: 8px; right: 8px; width: auto; bottom: calc(var(--nav-h) + 8px + env(safe-area-inset-bottom));
-    box-shadow: var(--shadow); background: var(--surface);
-  }
+  .nav-bottom { position: absolute; left: 8px; right: 8px; bottom: 100%; margin: 0 0 8px; }
+  #runbar { box-shadow: var(--shadow); background: var(--surface); }
   #runbar .run { grid-template-columns: 1fr auto auto; }
   .run-info { grid-column: auto; }
   .run-clock { font-size: 18px; }
