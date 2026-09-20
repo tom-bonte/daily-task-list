@@ -69,7 +69,6 @@ extension NSColor {
 final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var timerItems: [NSMenuItem] = []
-    let loginItem = NSMenuItem(title: "Start at login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
     let accessItem = NSMenuItem(title: "Allow timer display…", action: #selector(requestAccess), keyEquivalent: "")
     var running: [RunningTimer] = []
 
@@ -87,15 +86,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         accessItem.target = self
-        menu.addItem(accessItem)
+        menu.addItem(accessItem)          // only shown until permission is granted
         menu.addItem(.separator())
-        add(menu, "Open Habits Rabbits", #selector(openApp), key: " ", mask: [.option])
-        add(menu, "Plan tomorrow", #selector(openTomorrow))
-        add(menu, "Stats", #selector(openStats))
         add(menu, "Force update", #selector(forceUpdate))
-        menu.addItem(.separator())
-        loginItem.target = self
-        menu.addItem(loginItem)
         add(menu, "Quit Habits Rabbits", #selector(quit), key: "q", mask: [.command])
         item.menu = menu
 
@@ -105,6 +98,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
         }
         enableLoginItemOnce()
+        if !AXIsProcessTrusted() {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+        }
         refresh()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.refresh() }
     }
@@ -222,18 +219,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return title
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        refresh()
-        if #available(macOS 13, *) {
-            loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        } else {
-            loginItem.isHidden = true
-        }
-    }
+    func menuWillOpen(_ menu: NSMenu) { refresh() }
 
     // MARK: actions
 
-    @objc private func openApp() { NSWorkspace.shared.open(URL(fileURLWithPath: webAppPath)) }
     @objc private func stopOne(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         send("?do=stop&task=\(id)")
@@ -251,8 +240,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refreshTitleOnly() {
         item.button?.title = running.isEmpty ? "" : " " + running.map(\.compact).joined(separator: " · ")
     }
-    @objc private func openTomorrow() { send("?date=tomorrow", background: false) }
-    @objc private func openStats() { send("?view=stats", background: false) }
     /// Loads the uncached reset page, which clears a stuck service worker.
     @objc private func forceUpdate() { send("reset.html", background: false) }
     /// Quits the app; the icon follows it out. The helper stays for next time.
@@ -265,17 +252,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
-
-    @objc private func toggleLogin(_ sender: NSMenuItem) {
-        guard #available(macOS 13, *) else { return }
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .enabled { try service.unregister() } else { try service.register() }
-        } catch {
-            NSSound.beep()
-        }
-        sender.state = service.status == .enabled ? .on : .off
     }
 
     private func send(_ query: String, background: Bool = true) {
