@@ -94,6 +94,7 @@ function openDay(key) {
     if (S.date !== key) return;
     S.day = d;
     S.dayLoaded = true;
+    reconcileRunning(d, key);
     if (!d?.tasks?.length && S.lastBefore === undefined) {
       S.lastBefore = null;
       S.store.getLastDayBefore(key).then(last => {
@@ -145,9 +146,28 @@ const findTask = id => S.day?.tasks.find(t => t.id === id);
 
 // ---------------- timers ----------------
 
+// A task with an open session IS running, whatever settings say. Settings only
+// mirror that so the running bar can show timers from other days; devices that
+// overwrite each other can leave the two out of step, so repair it on load.
+function reconcileRunning(day, key) {
+  if (!S.settings) return;
+  const open = (day?.tasks || []).filter(t => M.isRunning(t));
+  const runs = S.settings.running.filter(r => r.date !== key || open.some(t => t.id === r.id));
+  for (const t of open) {
+    if (runs.some(r => r.date === key && r.id === t.id)) continue;
+    const last = t.sessions.at(-1);
+    runs.push({ date: key, id: t.id, text: t.text, cat: t.cat, base: M.taskMs({ ...t, sessions: t.sessions.slice(0, -1) }), s: last.s });
+  }
+  if (JSON.stringify(runs) === JSON.stringify(S.settings.running)) return;
+  S.settings.running = runs;
+  saveSettings();
+}
+
 // Stops one running timer, or all of them when no id is given.
 async function stopRunning(id = null, now = Date.now()) {
   const runs = S.settings.running.filter(r => id == null || r.id === id);
+  // Fallback: an open session on the current day that settings never recorded.
+  if (!runs.length && id && M.isRunning(findTask(id) || {})) runs.push({ date: S.date, id });
   if (!runs.length) return;
   S.settings.running = S.settings.running.filter(r => !runs.includes(r));
   saveSettings();
@@ -183,7 +203,7 @@ async function startTimer(id) {
 }
 
 const runFor = id => S.settings.running.find(r => r.date === S.date && r.id === id);
-const isRunningTask = id => !!runFor(id);
+const isRunningTask = id => !!runFor(id) || M.isRunning(findTask(id) || {});
 
 // ---------------- rendering ----------------
 
@@ -584,13 +604,21 @@ function searchView() {
 
 // ---------------- edit sheet ----------------
 
+// Editable blocks. The end of a running block is blank; filling it in stops the
+// timer. A block that started on an earlier day keeps its own date.
 function sessionsHtml(sessions) {
-  return sessions.map((s, i) => `
-    <li>
-      <span>${M.fmtTime(s.s)} – ${s.e ? M.fmtTime(s.e) : 'now'}</span>
-      <span class="muted">${M.fmtDur((s.e ?? Date.now()) - s.s)}</span>
-      ${s.e ? `<button type="button" class="icon small" data-sess-del="${i}" aria-label="Remove this time block">×</button>` : '<span class="muted small">running</span>'}
-    </li>`).join('');
+  return sessions.map((s, i) => {
+    const day = M.dateKey(new Date(s.s));
+    const spans = M.dateKey(new Date(s.e ?? Date.now())) !== day;
+    return `
+      <li>
+        <input type="time" value="${M.hhmm(new Date(s.s))}" data-sess="${i}" data-edge="from" aria-label="Start time">
+        <span class="muted">–</span>
+        <input type="time" value="${s.e ? M.hhmm(new Date(s.e)) : ''}" data-sess="${i}" data-edge="to" aria-label="End time" placeholder="running">
+        <span class="muted small">${s.e ? M.fmtDur(s.e - s.s) : 'running'}${spans ? ' · next day' : ''}</span>
+        <button type="button" class="icon small" data-sess-del="${i}" aria-label="Remove this time block">×</button>
+      </li>`;
+  }).join('');
 }
 
 function timeInputs(key, minutes) {
@@ -664,6 +692,26 @@ function openSheet(id) {
     $('#sheet-sessions').innerHTML = sessionsHtml(draft.sessions);
   };
 
+  sheet.onchange = e => {
+    const input = e.target.closest?.('[data-sess]');
+    if (!input) return;
+    const at = +input.dataset.sess;
+    const block = draft.sessions[at];
+    if (!block) return;
+    const dayOf = M.dateKey(new Date(block.s));
+    if (input.dataset.edge === 'from') {
+      const moved = M.blockFromTimes(dayOf, input.value, M.hhmm(new Date(block.e ?? Date.now())));
+      if (moved) block.s = moved.s;
+    } else if (!input.value) {
+      block.e = null; // cleared: treat as still running
+    } else {
+      const ended = M.blockFromTimes(dayOf, M.hhmm(new Date(block.s)), input.value);
+      if (ended) block.e = ended.e;
+    }
+    draft.sessions = draft.sessions.filter(b => b.e == null || b.e > b.s);
+    refreshTime();
+  };
+
   sheet.onclick = async e => {
     if (e.target === sheet) return sheet.close();
     const adj = e.target.closest('[data-adj]');
@@ -718,12 +766,12 @@ function openSheet(id) {
       offerLearn(text, cat);
     }
     const target = targetIn.value === '' ? null : Math.max(0, Math.round(+targetIn.value));
-    // Closed sessions come from the draft; a session that was running when the
-    // sheet opened keeps its live state. The open session must stay last.
-    const liveStarts = new Set(t.sessions.filter(s => s.e == null).map(s => s.s));
-    const closed = draft.sessions.filter(s => s.e != null && !liveStarts.has(s.s));
-    const live = cur.sessions.filter(s => liveStarts.has(s.s));
-    const sessions = M.tidySessions([...closed, ...live]);
+    // The sheet edits every block, so the draft wins. A block still open in the
+    // draft takes the live copy, in case another device closed it meanwhile.
+    const sessions = M.tidySessions(draft.sessions.map(b =>
+      b.e != null ? { ...b } : ({ ...(cur.sessions.find(q => q.s === b.s) || b) })));
+    // Typing an end time also stops the timer.
+    if (!sessions.some(b => b.e == null)) S.settings.running = S.settings.running.filter(r => !(r.date === S.date && r.id === id));
     Object.assign(cur, { text, cat, target, repeat: form.elements.repeat.checked, adjust: draft.adjust, sessions });
     const run = runFor(id);
     if (run) Object.assign(run, { text, cat, base: M.taskMs({ ...cur, sessions: cur.sessions.slice(0, -1) }) });

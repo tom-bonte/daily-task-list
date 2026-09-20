@@ -53,6 +53,8 @@ The database is locked to one account. `firestore.rules` reads `/config/owner`; 
 
 ### Invariants worth knowing
 
+- A task with an open session **is** running; `settings.running` only mirrors that so the run bar can show timers from other days. `reconcileRunning` repairs the mirror whenever a day loads (devices overwriting the settings document used to strand a timer with no way to stop it).
+- The edit sheet lists every block with editable From/To times: clearing an end leaves it running, filling one in stops the timer, and × deletes the block.
 - **Several timers can run at once** (settings `running` is a list since `SETTINGS_VERSION` 3). Overlapping time is counted in full for each task, and `overlapMs` reports how much is double counted; the day tile, the rail and the stats tile warn when that is a minute or more. `stopRunning(id)` stops one timer, `stopRunning()` stops all; completing, deleting or moving a task stops its own timer.
 - Session hygiene (`tidySessions`): runs under `MIN_SESSION_MS` (1 min) are dropped, and blocks of the same task less than `MERGE_GAP_MS` (2 min) apart are merged. It runs on stop, on sheet save, and on log-time. `startTimer` reopens the previous block instead of creating a new one if it ended within 2 min and no other task ran in between. The day-view timeline rows have a × (`session-del`) to delete a block.
 - Learning: a manual category change saves exact-text `memory` and then offers, via the `ask()` prompt, to move the deciding keyword (`explainGuess`), or the first meaningful word (`learnableWord`), into the chosen category's keywords. Nothing is learned without the user confirming.

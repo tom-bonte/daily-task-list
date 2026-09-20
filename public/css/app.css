@@ -485,3 +485,7 @@ button.stat-row:hover { background: var(--surface-2); }
 .search-day .card-head { margin-bottom: 6px; }
 .search-day h2 { margin: 0; }
 form[data-form="search"] input { flex: 1; }
+
+.sessions li input[type="time"] { padding: 4px 6px; font-size: 13px; width: 105px; }
+.sessions li > .muted.small { margin-left: auto; }
+.sessions li > :last-child { margin-left: 0; }
