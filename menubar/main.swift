@@ -7,6 +7,10 @@
 // The running timer is read from the web app's window title (the page keeps it
 // as "▶ 0:45:03 · Task"), which needs Accessibility permission but no account,
 // no network and no copy of the data.
+//
+// The helper itself runs quietly at login, but its menu bar icon only appears
+// while Habits Rabbits is open: open the app and the icon arrives, quit the app
+// (or choose Quit here) and it disappears.
 
 import AppKit
 import ApplicationServices
@@ -61,11 +65,30 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         loginItem.target = self
         menu.addItem(loginItem)
-        add(menu, "Quit", #selector(quit), key: "q", mask: [.command])
+        add(menu, "Quit Habits Rabbits", #selector(quit), key: "q", mask: [.command])
         item.menu = menu
 
+        // Follow the app: the icon comes and goes with it.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.refresh() }
+        }
+        enableLoginItemOnce()
         refresh()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    private func webApp() -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first { $0.bundleURL?.path == webAppPath }
+    }
+
+    /// Stay out of the way, but be there the next time the app opens.
+    private func enableLoginItemOnce() {
+        guard #available(macOS 13, *) else { return }
+        let key = "loginItemOffered"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        try? SMAppService.mainApp.register()
     }
 
     private func add(_ menu: NSMenu, _ title: String, _ action: Selector, key: String = "", mask: NSEvent.ModifierFlags = []) {
@@ -109,6 +132,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func refresh() {
+        let appRunning = webApp() != nil
+        item.isVisible = appRunning  // no app, no icon
+        guard appRunning else { return }
         let trusted = AXIsProcessTrusted()
         accessItem.isHidden = trusted
         running = trusted ? windowTitle().flatMap(parse) : nil
@@ -126,11 +152,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             timerItem.isEnabled = true
             timerItem.action = #selector(stopTimer)
         } else if trusted {
-            timerItem.title = NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.path == webAppPath }
-                ? "No timer running"
-                : "Stop running timer"
-            timerItem.isEnabled = true
-            timerItem.action = #selector(stopTimer)
+            timerItem.title = "No timer running"
+            timerItem.isEnabled = false
+            timerItem.action = nil
         } else {
             timerItem.title = "Stop running timer"
             timerItem.action = #selector(stopTimer)
@@ -157,7 +181,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openTomorrow() { send("?date=tomorrow", background: false) }
     @objc private func openStats() { send("?view=stats", background: false) }
-    @objc private func quit() { NSApp.terminate(nil) }
+    /// Quits the app; the icon follows it out. The helper stays for next time.
+    @objc private func quit() {
+        webApp()?.terminate()
+        item.isVisible = false
+    }
 
     @objc private func requestAccess() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary

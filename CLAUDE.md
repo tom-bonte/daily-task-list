@@ -72,6 +72,7 @@ The database is locked to one account. `firestore.rules` reads `/config/owner`; 
 
 ## macOS extras
 
+- The helper runs at login but shows its icon **only while the web app is running** (`item.isVisible`, driven by NSWorkspace launch/terminate notifications), and its Quit item quits the web app rather than the helper.
 - `menubar/` is a small Swift menu bar app (`./menubar/build.sh` → `~/Applications/Habits Rabbits Menu.app`). It keeps no state: each item runs `open -g -a <web app> <site>?…`, which the web app turns into an action via `applyLaunchParams` (`?do=stop`, `?view=…`, `?date=today|tomorrow|YYYY-MM-DD`). Launch commands run after the **day** loads, not just settings, or the running timers are not known yet. The menu bar glyph comes from `npm run menubar-icon` (black silhouette + alpha, drawn as a template image).
 - ⌥Space activates the web app, via a BetterTouchTool keyboard trigger; the sidebar footer shows that shortcut on Mac only.
 
