@@ -309,17 +309,46 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func stopOne(_ id: String) {
         guard let timer = running.first(where: { $0.id == id }) else { return }
-        if !pressPause(for: timer.task) { send("?do=stop&task=\(id)") }  // fallback
+        stop(tasks: [timer.task], urlFallback: "?do=stop&task=\(id)")
         running.removeAll { $0.id == id }
         refresh(read: false)
     }
 
     @objc private func stopAll() {
-        let tasks = running.map(\.task)
-        let pressedAll = tasks.allSatisfy { pressPause(for: $0) }
-        if !pressedAll { send("?do=stop") }
+        stop(tasks: running.map(\.task), urlFallback: "?do=stop")
         running.removeAll()
         refresh(read: false)
+    }
+
+    /// Pressing the app's own pause button is instant and never reloads the
+    /// page, but the accessibility tree is only served while the app's window
+    /// is on the current Space. When it isn't, bring the app forward briefly,
+    /// press, and hand focus straight back to where it was.
+    private func stop(tasks: [String], urlFallback: String) {
+        let remaining = tasks.filter { !pressPause(for: $0) }
+        guard !remaining.isEmpty else { return }
+
+        let previous = NSWorkspace.shared.frontmostApplication
+        guard let app = webApp() else { return send(urlFallback) }
+        app.activate()
+        attemptPress(remaining, attemptsLeft: 10, previous: previous, urlFallback: urlFallback)
+    }
+
+    private func attemptPress(_ tasks: [String], attemptsLeft: Int, previous: NSRunningApplication?, urlFallback: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            let remaining = tasks.filter { !self.pressPause(for: $0) }
+            if remaining.isEmpty {
+                previous?.activate()
+                return
+            }
+            if attemptsLeft <= 1 {
+                previous?.activate()
+                self.send(urlFallback)  // last resort: the app reloads and handles it
+                return
+            }
+            attemptPress(remaining, attemptsLeft: attemptsLeft - 1, previous: previous, urlFallback: urlFallback)
+        }
     }
 
     /// Loads the uncached reset page, which clears a stuck service worker.
