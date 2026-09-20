@@ -73,6 +73,7 @@ function renderLogin(error) {
 // ?date=YYYY-MM-DD|today|tomorrow opens that day.
 async function applyLaunchParams() {
   const p = new URLSearchParams(location.search);
+  if (p.get('updated')) toast('Updated to the latest version');
   if (![...p.keys()].some(k => ['do', 'view', 'date'].includes(k))) return;
   const date = p.get('date');
   if (date) openDay(date === 'tomorrow' ? M.addDays(M.todayKey(), 1) : date === 'today' ? M.todayKey() : date);
@@ -510,6 +511,7 @@ function settingsView() {
       <p class="muted small">Shows a notification on this device while the app is open (a background tab counts), plus a prompt in the app.</p>
       <p class="muted small">Your data lives in Firebase and is locked to this account. Keep a copy now and then.</p>
       <button class="ghost" data-action="export">Download my data (JSON)</button>
+      <button class="ghost" data-action="force-update" title="Clears the offline cache and reloads">Force update</button>
       ${DEMO
         ? ' <button class="ghost" data-action="demo-reset">Clear demo data</button> <a class="ghost btnlink" href="./">Leave demo</a>'
         : '<button class="ghost" data-action="sign-out">Sign out</button>'}
@@ -1050,6 +1052,7 @@ document.addEventListener('click', async e => {
       }
       break;
     case 'reload': location.reload(); break;
+    case 'force-update': location.href = 'reset.html'; break;
     case 'sign-out': await stopRunning(); S.fb.signOut(); break;
     case 'view': showView(el.dataset.view); break;
     case 'day-shift': openDay(M.addDays(S.date, +el.dataset.dir)); break;

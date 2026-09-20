@@ -3,7 +3,7 @@
 // Code (HTML/CSS/JS) is network-first: a deploy must never leave the app running
 // a mix of old and new files. Falling back to the cache keeps it working offline.
 // Static assets (icons, the Firebase SDK) are cache-first, since they rarely change.
-const CACHE = 'dtl-shell-v3';
+const CACHE = 'dtl-shell-v4';
 const SHELL = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/app.js', 'js/model.js', 'js/stats.js', 'js/ui.js', 'js/firebase.js', 'js/local-store.js', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-32.png', 'favicon.webp'];
 
 self.addEventListener('install', e => {
@@ -22,6 +22,7 @@ self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
+  if (url.pathname.endsWith("/reset.html")) return;  // escape hatch: always fresh
   const sameOrigin = url.origin === location.origin;
   const isSdk = url.origin === 'https://www.gstatic.com' && url.pathname.startsWith('/firebasejs/');
   // Everything else (Firestore/Auth traffic) goes straight to the network.

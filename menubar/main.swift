@@ -92,6 +92,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(menu, "Open Habits Rabbits", #selector(openApp), key: " ", mask: [.option])
         add(menu, "Plan tomorrow", #selector(openTomorrow))
         add(menu, "Stats", #selector(openStats))
+        add(menu, "Force update", #selector(forceUpdate))
         menu.addItem(.separator())
         loginItem.target = self
         menu.addItem(loginItem)
@@ -252,6 +253,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openTomorrow() { send("?date=tomorrow", background: false) }
     @objc private func openStats() { send("?view=stats", background: false) }
+    /// Loads the uncached reset page, which clears a stuck service worker.
+    @objc private func forceUpdate() { send("reset.html", background: false) }
     /// Quits the app; the icon follows it out. The helper stays for next time.
     @objc private func quit() {
         webApp()?.terminate()
