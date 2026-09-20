@@ -1,6 +1,6 @@
 import * as M from './model.js';
 import { computeStats, renderStats, categoryBars, bucketName } from './stats.js';
-import { esc, catColor, catFill, catVars, renderTimeline, SLOT_NAMES } from './ui.js';
+import { esc, catColor, catFill, catVars, renderTimeline, renderDayZoom, SLOT_NAMES } from './ui.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
 
@@ -325,8 +325,8 @@ function railHtml(now = Date.now()) {
       ${st.overlap >= 60000 ? `<p class="muted-note warn">⚠ ${M.fmtDur(st.overlap)} of this counts twice: timers overlapped.</p>` : ''}
     </section>
     <section class="card">
-      <h2>Timeline</h2>
-      ${renderTimeline(S.date, S.day?.tasks, cats, now, 6, true)}
+      <div class="card-head"><h2>Timeline</h2><button class="linkish" data-action="zoom-day">Zoom →</button></div>
+      <div data-action="zoom-day" class="tl-click" title="Open the zoomed day view">${renderTimeline(S.date, S.day?.tasks, cats, now, 6, true)}</div>
     </section>
 `;
 }
@@ -612,9 +612,9 @@ function sessionsHtml(sessions) {
     const spans = M.dateKey(new Date(s.e ?? Date.now())) !== day;
     return `
       <li>
-        <input type="time" value="${M.hhmm(new Date(s.s))}" data-sess="${i}" data-edge="from" aria-label="Start time">
+        <input class="time-input" type="text" inputmode="numeric" maxlength="5" value="${M.hhmm(new Date(s.s))}" data-sess="${i}" data-edge="from" aria-label="Start time">
         <span class="muted">–</span>
-        <input type="time" value="${s.e ? M.hhmm(new Date(s.e)) : ''}" data-sess="${i}" data-edge="to" aria-label="End time" placeholder="running">
+        <input class="time-input" type="text" inputmode="numeric" maxlength="5" value="${s.e ? M.hhmm(new Date(s.e)) : ''}" data-sess="${i}" data-edge="to" aria-label="End time" placeholder="running">
         <span class="muted small">${s.e ? M.fmtDur(s.e - s.s) : 'running'}${spans ? ' · next day' : ''}</span>
         <button type="button" class="icon small" data-sess-del="${i}" aria-label="Remove this time block">×</button>
       </li>`;
@@ -624,8 +624,8 @@ function sessionsHtml(sessions) {
 function timeInputs(key, minutes) {
   const { from, to } = M.suggestBlock(key, minutes);
   return `
-    <label>From<input type="time" name="from" value="${from}" required></label>
-    <label>To<input type="time" name="to" value="${to}" required></label>`;
+    <label>From<input class="time-input" type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" name="from" value="${from}" required></label>
+    <label>To<input class="time-input" type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" name="to" value="${to}" required></label>`;
 }
 
 function openSheet(id) {
@@ -693,6 +693,10 @@ function openSheet(id) {
   };
 
   sheet.onchange = e => {
+    if (e.target.classList?.contains('time-input')) {
+      const tidy = M.normHHMM(e.target.value);
+      if (tidy) e.target.value = tidy;
+    }
     const input = e.target.closest?.('[data-sess]');
     if (!input) return;
     const at = +input.dataset.sess;
@@ -781,6 +785,31 @@ function openSheet(id) {
   };
   sheet.onclose = () => render();
   sheet.showModal();
+}
+
+// Full-height view of the day's sessions; overlapping timers sit side by side.
+function openZoom() {
+  const html = () => `
+    <div class="sheet-form zoom-sheet">
+      <div class="card-head">
+        <h3>${esc(M.dayLabel(S.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>
+        <span class="muted small">Click a block to edit that task</span>
+      </div>
+      ${renderDayZoom(S.date, S.day?.tasks, S.settings.categories)}
+      <div class="sheet-actions"><span class="spacer"></span><button type="button" class="ghost" data-sheet="cancel">Close</button></div>
+    </div>`;
+  sheet.innerHTML = html();
+  sheet.onchange = null;
+  sheet.onclick = e => {
+    if (e.target === sheet || e.target.closest('[data-sheet=cancel]')) sheet.close();
+  };
+  sheet.onclose = () => render();
+  sheet.showModal();
+  // Keep the running block growing while the view is open.
+  const live = setInterval(() => {
+    if (!sheet.open) return clearInterval(live);
+    if (S.settings.running.some(r => r.date === S.date)) sheet.innerHTML = html();
+  }, 30000);
 }
 
 // Shown after checking off a task that has no logged time.
@@ -973,7 +1002,8 @@ document.addEventListener('click', async e => {
       if (r && r.date !== S.date) openDay(r.date); else render();
       break;
     }
-    case 'edit': openSheet(id); break;
+    case 'edit': if (sheet.open) sheet.close(); openSheet(id); break;
+    case 'zoom-day': openZoom(); break;
     case 'session-del': {
       const taskId = el.dataset.task, start = +el.dataset.s;
       if (!confirm('Delete this time block?')) break;

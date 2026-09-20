@@ -28,6 +28,66 @@ export function catVars(cat) {
   return `--cc:${catColor(cat)};--cf:${catFill(cat)}`;
 }
 
+// Every session of a day, clipped to that day, oldest first.
+export function daySessions(date, tasks, categories, now = Date.now()) {
+  const catOf = id => categories.find(c => c.id === id) || categories.find(c => c.id === FALLBACK_CAT) || categories[0];
+  const dayStart = parseKey(date).getTime();
+  const dayEnd = dayStart + 86400000;
+  const out = [];
+  for (const t of tasks || []) {
+    for (const s of t.sessions || []) {
+      const a = Math.max(s.s, dayStart), b = Math.min(s.e ?? now, dayEnd);
+      if (b > a) out.push({ a, b, live: s.e == null, text: t.text, cat: catOf(t.cat), taskId: t.id, start: s.s });
+    }
+  }
+  return out.sort((x, y) => x.a - y.a);
+}
+
+// Zoomed view of a day: one hour per row, overlapping timers side by side.
+export function renderDayZoom(date, tasks, categories, now = Date.now()) {
+  const sessions = daySessions(date, tasks, categories, now);
+  if (!sessions.length) return '<p class="muted-note">No timer sessions on this day yet.</p>';
+  const dayStart = parseKey(date).getTime();
+  const hour = ms => (ms - dayStart) / 3600000;
+  const from = Math.floor(Math.min(...sessions.map(s => hour(s.a))));
+  const to = Math.ceil(Math.max(...sessions.map(s => hour(s.b))));
+  const span = Math.max(2, to - from);
+  const ROW = 58; // px per hour
+
+  // Lane packing: a session moves right only when it overlaps one already placed.
+  const lanes = [];
+  for (const s of sessions) {
+    let lane = lanes.findIndex(end => end <= s.a);
+    if (lane < 0) { lane = lanes.length; lanes.push(0); }
+    lanes[lane] = s.b;
+    s.lane = lane;
+  }
+  const cols = lanes.length;
+
+  const hours = [];
+  for (let h = from; h <= to; h++) hours.push(h);
+
+  return `
+    <div class="zoom" style="height:${span * ROW}px">
+      <div class="zoom-grid">
+        ${hours.map(h => `<div class="zoom-hour" style="top:${(h - from) * ROW}px"><span>${String(h % 24).padStart(2, '0')}:00</span></div>`).join('')}
+      </div>
+      <div class="zoom-blocks">
+        ${sessions.map(s => {
+          const top = (hour(s.a) - from) * ROW;
+          const height = Math.max(18, (hour(s.b) - hour(s.a)) * ROW);
+          const width = 100 / cols;
+          return `
+            <button class="zoom-block ${s.live ? 'live' : ''}" style="${catVars(s.cat)};top:${top}px;height:${height}px;left:${s.lane * width}%;width:calc(${width}% - 4px)"
+              data-action="edit" data-id="${esc(s.taskId)}" title="${esc(s.text)} · ${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)}">
+              <span class="zoom-text">${esc(s.text)}</span>
+              <span class="zoom-meta">${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)} · ${fmtDur(s.b - s.a)}</span>
+            </button>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
 // Horizontal strip of the day's timer sessions, plus the latest sessions as a list.
 export function renderTimeline(date, tasks, categories, now = Date.now(), listMax = 6, deletable = false) {
   const catOf = id => categories.find(c => c.id === id) || categories.find(c => c.id === FALLBACK_CAT) || categories[0];
@@ -49,8 +109,11 @@ export function renderTimeline(date, tasks, categories, now = Date.now(), listMa
   const span = endH - startH;
   const pos = h => ((h - startH) / span) * 100;
 
+  // Keep labels apart: wider spans get a coarser step.
+  const step = span > 16 ? 6 : span > 9 ? 3 : 2;
   const ticks = [];
-  for (let h = Math.ceil(startH / 3) * 3; h <= endH; h += 3) ticks.push(h);
+  for (let h = Math.ceil(startH / step) * step; h <= endH; h += step) ticks.push(h);
+  if (ticks[0] - startH > step / 2) ticks.unshift(startH);
 
   const blocks = sessions.map(s => {
     const label = `${s.text} · ${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)} (${fmtDur(s.b - s.a)})`;
@@ -69,7 +132,12 @@ export function renderTimeline(date, tasks, categories, now = Date.now(), listMa
   return `
     <div class="timeline" role="img" aria-label="${sessions.length} timer sessions">
       <div class="tl-track">${blocks}</div>
-      <div class="tl-ticks">${ticks.map(h => `<span style="left:${pos(h)}%">${String(h % 24).padStart(2, '0')}:00</span>`).join('')}</div>
+      <div class="tl-ticks">${ticks.map(h => {
+        const at = pos(h);
+        // Pull the end labels inside the strip so nothing is clipped.
+        const shift = at < 6 ? 'translateX(0)' : at > 94 ? 'translateX(-100%)' : 'translateX(-50%)';
+        return `<span style="left:${at}%;transform:${shift}">${String(h % 24).padStart(2, '0')}:00</span>`;
+      }).join('')}</div>
     </div>
     <ul class="tl-list">${list}</ul>`;
 }

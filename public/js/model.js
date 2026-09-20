@@ -200,7 +200,17 @@ export function carryOver(tasks) {
 
 // A manually logged session from "HH:MM" inputs on a given day. An end before
 // the start means it ran past midnight.
-export function blockFromTimes(key, from, to) {
+// Accepts "9:30", "930", "09.30" and returns "09:30"; null when it is not a time.
+export function normHHMM(v) {
+  const m = String(v ?? '').trim().match(/^(\d{1,2})\s*[:.hu]?\s*(\d{2})?$/i);
+  if (!m) return null;
+  const h = +m[1], min = m[2] ? +m[2] : 0;
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+export function blockFromTimes(key, rawFrom, rawTo) {
+  const from = normHHMM(rawFrom), to = normHHMM(rawTo);
   if (!from || !to) return null;
   const base = parseKey(key).getTime();
   const at = hhmm => { const [h, m] = hhmm.split(':').map(Number); return base + (h * 60 + m) * 60000; };
@@ -239,7 +249,7 @@ export function fmtMin(min) {
 }
 
 export function fmtClock(ms) {
-  const s = Math.floor(ms / 1000);
+  const s = Math.floor(Math.max(0, ms) / 1000);
   const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = s % 60;
   return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
