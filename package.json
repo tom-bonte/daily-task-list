@@ -6,9 +6,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "icons": "node scripts/build-icons.mjs",
     "dev": "npx serve public -l 5173",
+    "icons": "node scripts/build-icons.mjs",
+    "menubar": "./menubar/build.sh",
     "menubar-icon": "node scripts/build-menubar-icon.mjs",
-    "menubar": "./menubar/build.sh"
+    "test": "node --test 'test/*.test.js'"
   }
 }

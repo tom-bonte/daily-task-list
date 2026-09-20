@@ -511,6 +511,8 @@ function settingsView() {
       <p class="muted small">Shows a notification on this device while the app is open (a background tab counts), plus a prompt in the app.</p>
       <p class="muted small">Your data lives in Firebase and is locked to this account. Keep a copy now and then.</p>
       <button class="ghost" data-action="export">Download my data (JSON)</button>
+      <button class="ghost" data-action="import">Restore from a file…</button>
+      <input type="file" id="importfile" accept="application/json,.json" data-change="import-file" hidden>
       <button class="ghost" data-action="force-update" title="Clears the offline cache and reloads">Force update</button>
       ${DEMO
         ? ' <button class="ghost" data-action="demo-reset">Clear demo data</button> <a class="ghost btnlink" href="./">Leave demo</a>'
@@ -998,6 +1000,61 @@ function offerLearn(text, chosen) {
   });
 }
 
+// Restore a downloaded export. Only the days in the file are touched; every
+// other day stays as it is. Nothing is written before the user confirms.
+async function importBackup(file) {
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    banner("Couldn't read that file: it is not valid JSON.");
+    return;
+  }
+  const b = M.parseBackup(data);
+  if (b.error) { banner(b.error); return; }
+  if (!b.days.length && !b.settings) { banner('Nothing to restore: that file holds no days and no settings.'); return; }
+  clearBanner();
+
+  const keys = b.days.map(d => d.date);
+  let already = 0;
+  if (keys.length) {
+    const have = await S.store.getDaysRange(keys[0], keys.at(-1));
+    const mine = new Set(have.filter(d => d.tasks?.length).map(d => d.date));
+    already = keys.filter(k => mine.has(k)).length;
+  }
+  const notes = [
+    `Restore ${b.days.length} day${b.days.length === 1 ? '' : 's'} from “${file.name}”?`,
+    keys.length ? `${M.dayLabel(keys[0])} – ${M.dayLabel(keys.at(-1))}.` : '',
+    already ? `${already} of those days already ${already === 1 ? 'has' : 'have'} tasks here and will be replaced.` : '',
+    b.settings ? 'Your categories, keywords, backlog and learned choices are replaced too.' : '',
+    b.closedRuns ? `${b.closedRuns} timer${b.closedRuns === 1 ? '' : 's'} still running in the file ${b.closedRuns === 1 ? 'is' : 'are'} stopped at the export time.` : '',
+    b.skippedDays || b.skippedTasks || b.droppedBlocks ? `Skipping ${b.skippedDays} unreadable day(s), ${b.skippedTasks} task(s) and ${b.droppedBlocks} block(s).` : '',
+    'Days that are not in the file are left alone. This cannot be undone.',
+  ].filter(Boolean);
+  if (!confirm(notes.join('\n\n'))) return;
+
+  await stopRunning();
+  let done = 0, failed = 0;
+  // In batches, so a year of days doesn't take a round trip each.
+  for (let i = 0; i < b.days.length; i += 10) {
+    const batch = b.days.slice(i, i + 10);
+    const results = await Promise.allSettled(batch.map(d => S.store.saveDay(d.date, d)));
+    for (const r of results) {
+      if (r.status === 'rejected') { failed++; console.error(r.reason); } else done++;
+    }
+    if (b.days.length > 10) banner(`Restoring… ${done + failed}/${b.days.length}`, 'warn');
+  }
+  if (b.settings) {
+    S.settings = b.settings;
+    try { await S.store.saveSettings(S.settings); } catch (err) { failed++; console.error(err); }
+  }
+  clearBanner();
+  if (failed) banner(`Restored ${done} day${done === 1 ? '' : 's'}, but ${failed} write${failed === 1 ? '' : 's'} failed. Try again when you are back online.`);
+  else toast(`Restored ${done} day${done === 1 ? '' : 's'}`);
+  openDay(S.date);
+}
+
 // Sticky message for problems the user must see (save errors, offline).
 function banner(msg, kind = 'error') {
   const el = $('#banner');
@@ -1167,6 +1224,7 @@ document.addEventListener('click', async e => {
       toast(`Downloaded ${days.length} day${days.length === 1 ? '' : 's'}`);
       break;
     }
+    case 'import': $('#importfile').click(); break;
     case 'demo-reset':
       if (confirm('Clear all demo data?')) { localStorage.removeItem('dtl-demo'); location.reload(); }
       break;
@@ -1274,6 +1332,11 @@ document.addEventListener('change', e => {
       if (p === 'granted') { localStorage.setItem(NOTIFY_KEY, '1'); toast('Notifications on for this device'); }
       else { el.checked = false; toast('Your browser blocked notifications'); }
     });
+  }
+  if (kind === 'import-file') {
+    const file = el.files?.[0];
+    el.value = ''; // so picking the same file twice still fires
+    importBackup(file);
   }
   if (kind === 'cat-field') {
     const cat = S.settings.categories.find(c => c.id === el.closest('[data-cat]').dataset.cat);

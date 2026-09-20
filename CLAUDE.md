@@ -10,6 +10,7 @@ A personal daily task list with per-task timers and time statistics, called **Ha
 
 ```bash
 npx serve public -l 5173            # local dev server (also in .claude/launch.json as "app")
+npm test                                 # node's test runner over test/*.test.js
 firebase deploy --only firestore:rules   # rules are the only thing deployed via Firebase
 ```
 
@@ -17,14 +18,14 @@ firebase deploy --only firestore:rules   # rules are the only thing deployed via
 - Any new hosting domain must be listed under Firebase Console → Authentication → Settings → Authorized domains, or Google sign-in fails with `auth/unauthorized-domain`.
 - `http://localhost:5173` without `?demo` talks to the **real Firestore data** (localhost is an authorized auth domain), so local edits change the user's live tasks.
 - Open `http://localhost:5173/?demo` for **demo mode**: it uses a localStorage store and needs no sign-in or network. Use it to test UI changes; Google sign-in can't be automated.
-- There are no tests, linter, or bundler. `public/js/model.js` is pure, so it can be exercised directly with `node` via a small `.mjs` script that imports it.
+- `npm test` covers the pure logic in `public/js/model.js` only (`test/model.test.js`, node's built-in runner, no dependencies). Anything touching the DOM or Firebase is checked by hand in demo mode. There is no linter or bundler.
 - Python's `http.server` can't read `~/Documents` in this environment; use `npx serve`.
 
 ## Architecture
 
 All app code is in `public/`, as ES modules loaded straight from the browser. The Firebase SDK comes from the gstatic CDN, pinned to **12.19.0**; keep every Firebase import on that same version.
 
-- `js/model.js`: pure logic with no DOM or Firebase. It holds the category presets, keyword auto-categorization (`PRESET_KEYWORDS` + `guessCategory`, mixed EN/NL/ES), settings migrations (`SETTINGS_VERSION`, `migrateCategories`), `parseTarget` (reads a planned duration from text like "2hr…" or "5:45-6:45…"), `normText` (strips times so the same task groups across days), time math, carry-over, and date/period helpers.
+- `js/model.js`: pure logic with no DOM or Firebase. It holds the category presets, keyword auto-categorization (`PRESET_KEYWORDS` + `guessCategory`, mixed EN/NL/ES), settings migrations (`SETTINGS_VERSION`, `migrateCategories`), `parseTarget` (reads a planned duration from text like "2hr…" or "5:45-6:45…"), `normText` (strips times so the same task groups across days), time math, carry-over, date/period helpers, and `parseBackup` (validates a downloaded JSON export back into store-shaped data).
 - `js/app.js`: state object `S`, full re-render via `innerHTML` templates, event delegation on `data-action` / `data-change` / `data-form` attributes, timer logic, and the edit-task `<dialog>`. A 1s `tick()` updates only the live numbers and does not re-render.
 - **Layout is desktop-first.** A fixed left sidebar (`#tabs`) holds the running timer card (`#runbar`). The day view is the task columns plus a right rail (`#rail`: category split and timeline; the user doesn't want the backlog there) that the tick refreshes every 15s. Below 1180px the rail drops under the tasks. Below 760px the sidebar becomes a bottom tab bar.
 - Keyboard shortcuts (in the `keydown` handler): `1`–`5` switch views, `N` focuses the add field, `/` opens Search, `←`/`→` change day, `T` jumps to today, `J`/`K` select a task, `Space` starts/stops its timer, `E` edits it, `X` completes it.
@@ -64,6 +65,7 @@ The database is locked to one account. `firestore.rules` reads `/config/owner`; 
 - A snapshot can replace `S.day` at any time, so re-find tasks by id before mutating after any async gap (see the edit sheet's submit handler).
 - A running session (`e: null`) must stay **last** in `sessions`, because `stopRunning` and `isRunning` read `sessions.at(-1)`. Manually logged blocks (`blockFromTimes`: edit sheet "Add block", or the "Log time?" prompt shown whenever a task is checked off with no logged time) are inserted sorted before it. From/To times typed in the edit sheet count on Save even without pressing "+ Add".
 - All writes go through `persist()`, which surfaces failures in the sticky `#banner` (also used for the offline notice). Deleting a task offers Undo through `ask()`.
+- Settings has both halves of the backup: "Download my data (JSON)" and "Restore from a file…" (`importBackup` in `app.js`, on top of `parseBackup`). A restore **replaces the days in the file and the settings, and leaves every other day alone**; it is confirmed with a `confirm()` that names the date range, how many of those days already have tasks, and what was skipped. Timers still running in the file are closed at its `exported` timestamp (dropped when the file has none), so restoring an old backup can never book the hours since, and `settings.running` is never restored.
 - `tick()` also handles the **day rollover** (`rollOver` splits a running timer at midnight and continues it on the new day) and the **long-timer guard** (`LONG_TIMER_MS`, 3h: a notification plus an `ask()` offering to trim). Notifications are per-device (`localStorage` `dtl-notify`), and on iOS they only arrive while the app is open.
 - In demo mode, `window.__dtl` exposes `{ S, rollOver }` for testing time-dependent paths without touching the clock.
 - The edit sheet saves in its form `submit` handler, not in the `<dialog>` `close` event. Chrome defers `close` in background tabs.

@@ -322,3 +322,79 @@ export function withDefaults(s) {
     running: Array.isArray(s?.running) ? s.running : (s?.running ? [s.running] : []),
   };
 }
+
+// ---------- restoring a JSON export ----------
+
+// A key is only valid if it round-trips: "2026-02-31" is not a day.
+export function validDateKey(key) {
+  return typeof key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(key) && dateKey(parseKey(key)) === key;
+}
+
+// Sessions from a file: drop the unreadable ones, keep a running session last.
+// A session that was still running when the export was written is closed at
+// that moment, so restoring an old file can't book the hours since.
+function cleanSessions(sessions, closeAt) {
+  const out = [];
+  let closed = 0, dropped = 0;
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    const start = Number(s?.s);
+    if (!Number.isFinite(start)) { dropped++; continue; }
+    if (s?.e == null) {
+      if (Number.isFinite(closeAt) && closeAt > start) { out.push({ s: start, e: closeAt }); closed++; }
+      else dropped++;
+      continue;
+    }
+    const end = Number(s.e);
+    if (!Number.isFinite(end) || end < start) { dropped++; continue; }
+    out.push({ s: start, e: end });
+  }
+  out.sort((a, b) => a.s - b.s);
+  return { sessions: out, closed, dropped };
+}
+
+function cleanTask(t, closeAt) {
+  const text = typeof t?.text === 'string' ? t.text.trim() : '';
+  if (!text) return null;
+  const { sessions, closed, dropped } = cleanSessions(t.sessions, closeAt);
+  const task = {
+    id: typeof t.id === 'string' && t.id ? t.id : uid(),
+    text,
+    cat: typeof t.cat === 'string' && t.cat ? t.cat : FALLBACK_CAT,
+    done: !!t.done,
+    repeat: !!t.repeat,
+    target: Number.isFinite(t.target) ? t.target : parseTarget(text),
+    sessions,
+    adjust: Number.isFinite(t.adjust) ? t.adjust : 0,
+  };
+  return { task, closed, dropped };
+}
+
+// Read a downloaded export back into store-shaped data. Pure: it validates and
+// repairs, and reports what it had to skip, so the caller can ask first.
+export function parseBackup(data) {
+  const out = { settings: null, days: [], skippedDays: 0, skippedTasks: 0, droppedBlocks: 0, closedRuns: 0, error: null };
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { ...out, error: 'That file is not a Habits Rabbits export.' };
+  if (!Array.isArray(data.days) && !data.settings) return { ...out, error: "That file has no days and no settings: it isn't a Habits Rabbits export." };
+
+  const closeAt = Date.parse(data.exported ?? '');
+  const byKey = new Map(); // a repeated date keeps the last copy in the file
+  for (const d of Array.isArray(data.days) ? data.days : []) {
+    if (!validDateKey(d?.date)) { out.skippedDays++; continue; }
+    const tasks = [];
+    for (const t of Array.isArray(d.tasks) ? d.tasks : []) {
+      const cleaned = cleanTask(t, closeAt);
+      if (!cleaned) { out.skippedTasks++; continue; }
+      out.closedRuns += cleaned.closed;
+      out.droppedBlocks += cleaned.dropped;
+      tasks.push(cleaned.task);
+    }
+    byKey.set(d.date, { date: d.date, tasks });
+  }
+  out.days = [...byKey.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+  if (data.settings && typeof data.settings === 'object') {
+    // Timers from the exporting device are not restored: nothing is running now.
+    out.settings = { ...withDefaults(data.settings), running: [] };
+  }
+  return out;
+}
