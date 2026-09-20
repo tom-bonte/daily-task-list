@@ -20,25 +20,58 @@ let webAppPath = NSString(string: "~/Applications/Tasks.app").expandingTildeInPa
 let site = "https://habits-rabbits.netlify.app/"
 
 struct RunningTimer {
-    var clock: String      // "0:45:03"
-    var task: String?      // nil when several timers run
-    var count: Int
+    var id: String
+    var clock: String       // "1:14:11"
+    var category: String
+    var colour: NSColor
+    var task: String
 
     /// "45m" / "1h05" for the menu bar, where space is precious.
     var compact: String {
         let parts = clock.split(separator: ":").map { Int($0) ?? 0 }
         guard parts.count == 3 else { return clock }
-        let label = parts[0] > 0 ? "\(parts[0])h\(String(format: "%02d", parts[1]))" : "\(parts[1])m"
-        return count > 1 ? "\(label) ·\(count)" : label
+        return parts[0] > 0 ? "\(parts[0])h\(String(format: "%02d", parts[1]))" : "\(parts[1])m"
+    }
+}
+
+/// The web app keeps a line like
+/// "HRSTATE|id~1:14:11~Work~#eb6834~Finish Fuera app|id2~…" in a hidden element;
+/// see publishState in public/js/app.js.
+func parseState(_ line: String) -> [RunningTimer] {
+    line.components(separatedBy: "|").dropFirst().compactMap { record in
+        let f = record.components(separatedBy: "~")
+        guard f.count >= 5 else { return nil }
+        return RunningTimer(id: f[0], clock: f[1], category: f[2], colour: NSColor(hex: f[3]), task: f[4])
+    }
+}
+
+extension NSColor {
+    convenience init(hex: String) {
+        var value: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))).scanHexInt64(&value)
+        self.init(srgbRed: CGFloat((value >> 16) & 0xff) / 255,
+                  green: CGFloat((value >> 8) & 0xff) / 255,
+                  blue: CGFloat(value & 0xff) / 255,
+                  alpha: value == 0 ? 0 : 1)
+    }
+
+    /// A small filled circle, like the pulse dot in the app.
+    func dot(size: CGFloat = 9) -> NSImage {
+        let image = NSImage(size: NSSize(width: size + 6, height: size))
+        image.lockFocus()
+        setFill()
+        NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: size, height: size)).fill()
+        image.unlockFocus()
+        return image
     }
 }
 
 final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    let timerItem = NSMenuItem(title: "No timer running", action: nil, keyEquivalent: "")
+    var timerItems: [NSMenuItem] = []
     let loginItem = NSMenuItem(title: "Start at login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
     let accessItem = NSMenuItem(title: "Allow timer display…", action: #selector(requestAccess), keyEquivalent: "")
-    var running: RunningTimer?
+    var running: [RunningTimer] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let path = Bundle.main.path(forResource: "menubar", ofType: "png"),
@@ -53,9 +86,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        timerItem.target = self
-        timerItem.action = #selector(stopTimer)
-        menu.addItem(timerItem)
         accessItem.target = self
         menu.addItem(accessItem)
         menu.addItem(.separator())
@@ -98,37 +128,35 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(entry)
     }
 
-    // MARK: reading the timer from the web app's window title
+    // MARK: reading the state the web app publishes
 
-    private func windowTitle() -> String? {
+    private func stateLine() -> String? {
         let apps = NSWorkspace.shared.runningApplications.filter {
-            $0.bundleIdentifier?.hasPrefix("com.apple.Safari.WebApp") == true
-                || $0.bundleURL?.path == webAppPath
+            $0.bundleIdentifier?.hasPrefix("com.apple.Safari.WebApp") == true || $0.bundleURL?.path == webAppPath
         }
         for app in apps {
-            let element = AXUIElementCreateApplication(app.processIdentifier)
-            var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &value) == .success,
-                  let windows = value as? [AXUIElement] else { continue }
-            for window in windows {
-                var titleValue: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue) == .success,
-                      let title = titleValue as? String else { continue }
-                if title.contains("▶") { return title }
-            }
+            let root = AXUIElementCreateApplication(app.processIdentifier)
+            if let line = search(root, depth: 0) { return line }
         }
         return nil
     }
 
-    private func parse(_ title: String) -> RunningTimer? {
-        let body = title.replacingOccurrences(of: "▶", with: "").trimmingCharacters(in: .whitespaces)
-        if body.contains("timers running") {
-            let count = Int(body.split(separator: " ").first.map(String.init) ?? "") ?? 2
-            return RunningTimer(clock: "", task: nil, count: count)
+    /// Breadth of the accessibility tree is large, so walk it shallowly and stop
+    /// at the first element whose text is the published state.
+    private func search(_ element: AXUIElement, depth: Int) -> String? {
+        if depth > 14 { return nil }
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+           let text = value as? String, text.hasPrefix("HRSTATE") {
+            return text
         }
-        let parts = body.components(separatedBy: " · ")
-        guard parts.count >= 2 else { return nil }
-        return RunningTimer(clock: parts[0], task: parts.dropFirst().joined(separator: " · "), count: 1)
+        var childValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childValue) == .success,
+              let children = childValue as? [AXUIElement] else { return nil }
+        for child in children.prefix(60) {
+            if let found = search(child, depth: depth + 1) { return found }
+        }
+        return nil
     }
 
     func refresh() {
@@ -137,28 +165,60 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard appRunning else { return }
         let trusted = AXIsProcessTrusted()
         accessItem.isHidden = trusted
-        running = trusted ? windowTitle().flatMap(parse) : nil
+        running = trusted ? (stateLine().map(parseState) ?? []) : []
 
-        if let running, !running.clock.isEmpty {
-            item.button?.title = " " + running.compact
-        } else if running != nil {
-            item.button?.title = " ·\(running!.count)"
-        } else {
-            item.button?.title = ""
+        switch running.count {
+        case 0: item.button?.title = ""
+        case 1: item.button?.title = " " + running[0].compact
+        default: item.button?.title = " " + running.map(\.compact).joined(separator: " · ")
+        }
+        rebuildTimerItems()
+    }
+
+    /// One menu entry per running timer, styled like the cards in the app.
+    private func rebuildTimerItems() {
+        guard let menu = item.menu else { return }
+        for entry in timerItems { menu.removeItem(entry) }
+        timerItems.removeAll()
+
+        if running.isEmpty {
+            let entry = NSMenuItem(title: AXIsProcessTrusted() ? "No timer running" : "Stop running timer", action: nil, keyEquivalent: "")
+            if !AXIsProcessTrusted() {
+                entry.action = #selector(stopAll)
+                entry.target = self
+            }
+            entry.isEnabled = !AXIsProcessTrusted()
+            menu.insertItem(entry, at: 0)
+            timerItems = [entry]
+            return
         }
 
-        if let running {
-            timerItem.title = running.task.map { "Stop “\($0)” · \(running.clock)" } ?? "Stop \(running.count) running timers"
-            timerItem.isEnabled = true
-            timerItem.action = #selector(stopTimer)
-        } else if trusted {
-            timerItem.title = "No timer running"
-            timerItem.isEnabled = false
-            timerItem.action = nil
-        } else {
-            timerItem.title = "Stop running timer"
-            timerItem.action = #selector(stopTimer)
+        for (index, timer) in running.enumerated() {
+            let entry = NSMenuItem(title: "", action: #selector(stopOne(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = timer.id
+            entry.image = timer.colour.dot()
+            entry.attributedTitle = card(for: timer)
+            menu.insertItem(entry, at: index)
+            timerItems.append(entry)
         }
+        if running.count > 1 {
+            let all = NSMenuItem(title: "Stop all", action: #selector(stopAll), keyEquivalent: "")
+            all.target = self
+            menu.insertItem(all, at: running.count)
+            timerItems.append(all)
+        }
+    }
+
+    private func card(for timer: RunningTimer) -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: timer.task + "\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)])
+        title.append(NSAttributedString(
+            string: "\(timer.category) · \(timer.clock)",
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+                         .foregroundColor: NSColor.secondaryLabelColor]))
+        return title
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -173,11 +233,22 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: actions
 
     @objc private func openApp() { NSWorkspace.shared.open(URL(fileURLWithPath: webAppPath)) }
-    @objc private func stopTimer() {
+    @objc private func stopOne(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        send("?do=stop&task=\(id)")
+        running.removeAll { $0.id == id }
+        refreshTitleOnly()
+    }
+
+    @objc private func stopAll() {
         send("?do=stop")
-        // Clear the menu bar straight away; the next refresh confirms it.
-        running = nil
-        item.button?.title = ""
+        running.removeAll()
+        refreshTitleOnly()
+    }
+
+    /// The web app needs a moment to write the new state; keep the bar honest meanwhile.
+    private func refreshTitleOnly() {
+        item.button?.title = running.isEmpty ? "" : " " + running.map(\.compact).joined(separator: " · ")
     }
     @objc private func openTomorrow() { send("?date=tomorrow", background: false) }
     @objc private func openStats() { send("?view=stats", background: false) }

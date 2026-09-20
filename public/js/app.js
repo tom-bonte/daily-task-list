@@ -77,8 +77,9 @@ async function applyLaunchParams() {
   const date = p.get('date');
   if (date) openDay(date === 'tomorrow' ? M.addDays(M.todayKey(), 1) : date === 'today' ? M.todayKey() : date);
   if (p.get('do') === 'stop') {
-    const running = S.settings.running.length;
-    await stopRunning();
+    const task = p.get('task');
+    const running = task ? S.settings.running.filter(r => r.id === task).length : S.settings.running.length;
+    await stopRunning(task || null);
     toast(running ? `Stopped ${running} timer${running > 1 ? 's' : ''}` : 'No timer was running');
   }
   if (p.get('view')) showView(p.get('view'));
@@ -413,6 +414,25 @@ function renderRunbar() {
           <button class="play on" data-action="stop-running" data-id="${esc(r.id)}" aria-label="Pause ${esc(r.text)}">${PAUSE}</button>
         </div>`;
     }).join('')}`;
+  publishState(runs, now);
+}
+
+// One line of text describing the running timers, kept in a screen-reader-only
+// element. The macOS menu bar helper reads it through the accessibility tree,
+// so it can show the same cards without a copy of the data. Fields: id, clock,
+// category, colour, task.
+function publishState(runs, now = Date.now()) {
+  const el = $('#ax-state');
+  if (!el) return;
+  const css = getComputedStyle(document.documentElement);
+  const clean = v => String(v).replace(/[|~\n]/g, ' ');
+  el.textContent = runs.length
+    ? 'HRSTATE|' + runs.map(r => {
+      const cat = catById(r.cat);
+      const colour = css.getPropertyValue(`--c${(cat.slot ?? 0) > 8 ? ((cat.slot - 1) % 8) + 1 : cat.slot ?? 0}`).trim();
+      return [r.id, M.fmtClock(r.base + now - r.s), cat.name, colour, r.text].map(clean).join('~');
+    }).join('|')
+    : 'HRSTATE';
 }
 
 function statsView() {
@@ -514,6 +534,7 @@ function tick() {
     const clock = M.fmtClock(r.base + now - r.s);
     const el = runEl.querySelector(`[data-clock="${r.id}"]`);
     if (el) el.textContent = clock;
+    if (r === runs[runs.length - 1]) publishState(runs, now);
     if (S.view === 'day' && r.date === S.date) {
       const t = findTask(r.id);
       const ms = t ? M.taskMs(t, now) : 0;

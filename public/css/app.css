@@ -127,16 +127,16 @@ kbd {
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; padding: 4px 10px 18px; }
 .brand-mark { width: 26px; height: 26px; object-fit: contain; }
-#tabs button {
+#tabs > button {
   display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 10px;
   border-radius: 9px; color: var(--ink-2); font-size: 14px; text-align: left;
 }
-#tabs button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
-#tabs button span { flex: 1; }
-#tabs button kbd { opacity: 0; transition: opacity 0.15s; }
-#tabs:hover button kbd { opacity: 1; }
-#tabs button:hover { background: var(--surface-2); color: var(--ink); }
-#tabs button[aria-current="page"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+#tabs > button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+#tabs > button span { flex: 1; }
+#tabs > button kbd { opacity: 0; transition: opacity 0.15s; }
+#tabs:hover > button kbd { opacity: 1; }
+#tabs > button:hover { background: var(--surface-2); color: var(--ink); }
+#tabs > button[aria-current="page"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 .nav-foot { padding: 0 10px 2px; display: grid; gap: 7px; }
 .nav-mail { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-hint { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); opacity: 0.75; }
@@ -149,16 +149,20 @@ kbd {
   display: grid; gap: 8px;
   background: var(--bg); border: 1px solid var(--ring); border-radius: 12px; padding: 8px;
 }
+/* Defensive: an older cached index.html keeps #runbar outside the sidebar. */
+body > #runbar { position: fixed; left: 12px; bottom: 44px; width: calc(var(--sidebar) - 24px); z-index: 11; }
 #runbar .run {
-  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 8px;
-  border-left: 3px solid var(--cc); padding: 4px 4px 4px 9px; border-radius: 4px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  column-gap: 8px; row-gap: 1px;
+  border-left: 3px solid var(--cc); padding: 6px 4px 6px 9px; border-radius: 6px;
 }
+#runbar .run-info { grid-column: 1 / -1; }
 .run-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 0 4px; }
 #runbar[hidden] { display: none; }
-.run-info { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; text-align: left; align-items: center; }
-.run-text { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
-.run-cat { grid-column: 2; font-size: 12px; color: var(--muted); }
-.pulse { grid-row: span 2; width: 9px; height: 9px; flex: none; align-self: center; justify-self: center; border-radius: 50%; background: var(--cc); animation: pulse 1.6s ease-in-out infinite; }
+.run-info { min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left; }
+.run-text { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.run-cat { flex: none; font-size: 12px; color: var(--muted); }
+.pulse { width: 9px; height: 9px; flex: none; align-self: center; justify-self: center; border-radius: 50%; background: var(--cc); animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .pulse, .tl-block.live { animation: none; } }
 .run-clock { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 22px; letter-spacing: -0.01em; }
@@ -479,13 +483,12 @@ button.stat-row:hover { background: var(--surface-2); }
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   }
   .brand, .nav-foot, #tabs kbd, .addkey { display: none; }
-  #tabs button { flex: 1; max-width: 160px; height: var(--nav-h); flex-direction: column; justify-content: center; gap: 3px; font-size: 11px; border-radius: 0; }
-  #tabs button span { flex: none; }
-  #tabs button:hover, #tabs button[aria-current="page"] { background: none; }
-  #tabs button[aria-current="page"] { color: var(--accent); }
+  #tabs > button { flex: 1; max-width: 160px; height: var(--nav-h); flex-direction: column; justify-content: center; gap: 3px; font-size: 11px; border-radius: 0; }
+  #tabs > button span { flex: none; }
+  #tabs > button:hover, #tabs > button[aria-current="page"] { background: none; }
+  #tabs > button[aria-current="page"] { color: var(--accent); }
   .nav-bottom { position: absolute; left: 8px; right: 8px; bottom: 100%; margin: 0 0 8px; }
   #runbar { box-shadow: var(--shadow); background: var(--surface); }
-  #runbar .run { grid-template-columns: 1fr auto auto; }
   .run-info { grid-column: auto; }
   .run-clock { font-size: 18px; }
   #toast, #ask { left: 50%; }
