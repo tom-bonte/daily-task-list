@@ -257,19 +257,39 @@ kbd {
 .tl-dur { font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .tl-click { cursor: zoom-in; }
-.zoom-sheet { max-height: 80vh; }
-.zoom { position: relative; overflow-y: auto; max-height: 62vh; margin: 4px 0; }
-.zoom-grid { position: absolute; inset: 0; }
-.zoom-hour { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); }
-.zoom-hour span { position: absolute; top: -8px; left: 0; font-size: 11px; color: var(--muted); background: var(--surface); padding-right: 6px; font-variant-numeric: tabular-nums; }
-.zoom-blocks { position: absolute; inset: 0 0 0 46px; }
-.zoom-block {
-  position: absolute; overflow: hidden; text-align: left; display: grid; align-content: start; gap: 1px;
-  padding: 4px 8px; border-radius: 7px; border-left: 3px solid var(--cc);
-  background: color-mix(in srgb, var(--cc) 18%, var(--surface));
+#sheet.zoom-dialog { width: min(720px, calc(100% - 32px)); max-height: 88vh; display: flex; flex-direction: column; }
+.zoom-sheet { display: flex; flex-direction: column; min-height: 0; }
+.zoom-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 16px 14px 22px; border-bottom: 1px solid var(--line); }
+.zoom-head h3 { margin: 0 0 2px; font-size: 18px; }
+.zoom-sub { margin: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.zoom-foot { padding: 10px 22px 16px; border-top: 1px solid var(--line); }
+.zoom-empty { padding: 40px 22px; text-align: center; color: var(--muted); }
+
+.zoom { position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 10px 18px 10px 0; min-height: 0; }
+.zoom-grid { position: relative; height: var(--zoom-height); }
+.zoom-row { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); }
+.zoom-row.gap { background: repeating-linear-gradient(135deg, transparent 0 7px, var(--surface-2) 7px 8px); }
+.zoom-label { position: absolute; top: -7px; left: 0; width: 56px; text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.zoom-gap-note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 11px; color: var(--muted); background: var(--surface); padding: 1px 8px; border-radius: 999px; }
+.zoom-now { position: absolute; left: 56px; right: 0; border-top: 2px solid var(--accent); z-index: 3; pointer-events: none; }
+.zoom-now span {
+  position: absolute; top: -9px; left: 0; transform: translateX(calc(-100% - 6px));
+  font-size: 10px; font-weight: 700; color: var(--accent-ink); background: var(--accent);
+  border-radius: 999px; padding: 2px 6px; font-variant-numeric: tabular-nums;
 }
-.zoom-block:hover { background: color-mix(in srgb, var(--cc) 30%, var(--surface)); }
-.zoom-block.live { border-left-style: dashed; }
+
+.zoom-blocks { position: absolute; inset: 0 0 0 66px; }
+.zoom-block {
+  position: absolute; overflow: hidden; text-align: left; display: grid; align-content: start; gap: 2px;
+  padding: 6px 10px; border-radius: 8px; border: 1px solid transparent; border-left: 3px solid var(--cc);
+  background: color-mix(in srgb, var(--cc) 14%, var(--surface));
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.zoom-block:hover { background: color-mix(in srgb, var(--cc) 26%, var(--surface)); box-shadow: 0 2px 10px var(--ring); z-index: 2; }
+.zoom-block.live { border: 1px dashed var(--cc); border-left: 3px solid var(--cc); }
+.zoom-block.tight { align-content: center; padding: 0 10px; }
+.zoom-block.tight .zoom-text { font-size: 12px; }
+.zoom-block.tight .zoom-meta { display: none; }
 .zoom-text { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .zoom-meta { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -487,6 +507,9 @@ button.stat-row:hover { background: var(--surface-2); }
   .cat-edit-row select { width: 120px; }
   .cat-edit input.keywords { margin-left: 0; width: 100%; }
   #sheet { margin: auto 0 0; width: 100%; max-width: 100%; border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+  #sheet.zoom-dialog { width: 100%; max-height: 92vh; }
+  .zoom-head { padding: 14px 10px 12px 16px; }
+  .zoom { padding-right: 10px; }
 }
 
 .settings-check { padding: 4px 0 0 !important; }

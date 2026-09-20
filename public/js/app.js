@@ -789,26 +789,40 @@ function openSheet(id) {
 
 // Full-height view of the day's sessions; overlapping timers sit side by side.
 function openZoom() {
-  const html = () => `
-    <div class="sheet-form zoom-sheet">
-      <div class="card-head">
-        <h3>${esc(M.dayLabel(S.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>
-        <span class="muted small">Click a block to edit that task</span>
-      </div>
-      ${renderDayZoom(S.date, S.day?.tasks, S.settings.categories)}
-      <div class="sheet-actions"><span class="spacer"></span><button type="button" class="ghost" data-sheet="cancel">Close</button></div>
-    </div>`;
+  const html = () => {
+    const { total, overlap } = dayTotals();
+    const sessions = (S.day?.tasks || []).reduce((n, t) => n + (t.sessions?.length || 0), 0);
+    return `
+      <div class="zoom-sheet">
+        <header class="zoom-head">
+          <div>
+            <h3>${esc(M.dayLabel(S.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</h3>
+            <p class="zoom-sub">${M.fmtDur(total)} tracked · ${sessions} session${sessions === 1 ? '' : 's'}${overlap >= 60000 ? ` · <span class="warn">${M.fmtDur(overlap)} overlapping</span>` : ''}</p>
+          </div>
+          <button type="button" class="icon" data-sheet="cancel" aria-label="Close">×</button>
+        </header>
+        ${renderDayZoom(S.date, S.day?.tasks, S.settings.categories)}
+        <footer class="zoom-foot"><span class="muted small">Click a block to edit that task</span></footer>
+      </div>`;
+  };
+  sheet.className = 'zoom-dialog';
   sheet.innerHTML = html();
   sheet.onchange = null;
   sheet.onclick = e => {
     if (e.target === sheet || e.target.closest('[data-sheet=cancel]')) sheet.close();
   };
-  sheet.onclose = () => render();
+  sheet.onclose = () => { sheet.className = ''; render(); };
   sheet.showModal();
+  // Scroll to the running block, or the last one of the day.
+  const focus = sheet.querySelector('.zoom-block.live') || sheet.querySelector('.zoom-block:last-of-type');
+  focus?.scrollIntoView({ block: 'center' });
   // Keep the running block growing while the view is open.
   const live = setInterval(() => {
     if (!sheet.open) return clearInterval(live);
-    if (S.settings.running.some(r => r.date === S.date)) sheet.innerHTML = html();
+    if (!S.settings.running.some(r => r.date === S.date)) return;
+    const keep = sheet.querySelector('.zoom')?.scrollTop;
+    sheet.innerHTML = html();
+    if (keep) sheet.querySelector('.zoom').scrollTop = keep;
   }, 30000);
 }
 

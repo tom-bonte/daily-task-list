@@ -1,5 +1,5 @@
 // Small shared UI helpers.
-import { parseKey, fmtDur, fmtTime, FALLBACK_CAT } from './model.js';
+import { parseKey, fmtDur, fmtTime, todayKey, FALLBACK_CAT } from './model.js';
 
 const HUES = ['Blue', 'Orange', 'Aqua', 'Yellow', 'Pink', 'Green', 'Violet', 'Red'];
 // Slot 0 = gray, 1-8 = palette hues, 9-16 = the same hues striped, so no two
@@ -43,48 +43,94 @@ export function daySessions(date, tasks, categories, now = Date.now()) {
   return out.sort((x, y) => x.a - y.a);
 }
 
-// Zoomed view of a day: one hour per row, overlapping timers side by side.
+// Zoomed view of a day. Quiet hours collapse into a small gap row, and only
+// sessions that actually overlap share the width, so the day reads at a glance.
 export function renderDayZoom(date, tasks, categories, now = Date.now()) {
   const sessions = daySessions(date, tasks, categories, now);
-  if (!sessions.length) return '<p class="muted-note">No timer sessions on this day yet.</p>';
+  if (!sessions.length) {
+    return '<p class="zoom-empty">No timer sessions on this day yet. Press ▶ on a task and it shows up here.</p>';
+  }
   const dayStart = parseKey(date).getTime();
   const hour = ms => (ms - dayStart) / 3600000;
-  const from = Math.floor(Math.min(...sessions.map(s => hour(s.a))));
-  const to = Math.ceil(Math.max(...sessions.map(s => hour(s.b))));
-  const span = Math.max(2, to - from);
-  const ROW = 58; // px per hour
+  const HOUR = 62;  // px for an hour with activity
+  const GAP = 34;   // px for a collapsed quiet stretch
+  const from = Math.floor(hour(Math.min(...sessions.map(s => s.a))));
+  const to = Math.ceil(hour(Math.max(...sessions.map(s => s.b))));
 
-  // Lane packing: a session moves right only when it overlaps one already placed.
-  const lanes = [];
-  for (const s of sessions) {
-    let lane = lanes.findIndex(end => end <= s.a);
-    if (lane < 0) { lane = lanes.length; lanes.push(0); }
-    lanes[lane] = s.b;
-    s.lane = lane;
+  // Rows: an hour that holds something, or a run of quiet hours collapsed into one.
+  const busy = h => sessions.some(s => hour(s.a) < h + 1 && hour(s.b) > h);
+  const rows = [];
+  for (let h = from; h < Math.max(to, from + 1); h++) {
+    if (busy(h) || h === from) { rows.push({ type: 'hour', h }); continue; }
+    const last = rows.at(-1);
+    if (last?.type === 'gap') last.hours.push(h);
+    else rows.push({ type: 'gap', hours: [h] });
   }
-  const cols = lanes.length;
+  // A single quiet hour is not worth collapsing.
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].type === 'gap' && rows[i].hours.length === 1) rows[i] = { type: 'hour', h: rows[i].hours[0] };
+  }
 
-  const hours = [];
-  for (let h = from; h <= to; h++) hours.push(h);
+  let y = 0;
+  for (const row of rows) {
+    row.top = y;
+    row.height = row.type === 'hour' ? HOUR : GAP;
+    y += row.height;
+  }
+  const total = y;
+
+  // Map a timestamp to a y position inside its row.
+  const yOf = ms => {
+    const h = hour(ms);
+    const row = rows.find(r => (r.type === 'hour' ? r.h === Math.floor(h) : r.hours.includes(Math.floor(h))));
+    if (!row) return h < (rows[0].h ?? from) ? 0 : total;
+    return row.type === 'hour' ? row.top + (h - row.h) * HOUR : row.top + GAP / 2;
+  };
+
+  // Clusters of genuinely overlapping sessions; only those share the width.
+  const clusters = [];
+  for (const s of sessions) {
+    const open = clusters.at(-1);
+    if (open && s.a < open.end) { open.items.push(s); open.end = Math.max(open.end, s.b); }
+    else clusters.push({ items: [s], end: s.b });
+  }
+  for (const cluster of clusters) {
+    const lanes = [];
+    for (const s of cluster.items) {
+      let lane = lanes.findIndex(end => end <= s.a);
+      if (lane < 0) { lane = lanes.length; lanes.push(0); }
+      lanes[lane] = s.b;
+      s.lane = lane;
+    }
+    cluster.cols = lanes.length;
+  }
+
+  const nowLine = date === todayKey() && hour(now) >= from && hour(now) <= to
+    ? `<div class="zoom-now" style="top:${yOf(now)}px"><span>${fmtTime(now)}</span></div>`
+    : '';
+
+  const grid = rows.map(row => row.type === 'hour'
+    ? `<div class="zoom-row" style="top:${row.top}px;height:${row.height}px"><span class="zoom-label">${String(row.h % 24).padStart(2, '0')}:00</span></div>`
+    : `<div class="zoom-row gap" style="top:${row.top}px;height:${row.height}px"><span class="zoom-label">${String(row.hours[0] % 24).padStart(2, '0')}:00</span><span class="zoom-gap-note">${row.hours.length}h quiet</span></div>`
+  ).join('');
+
+  const blocks = clusters.flatMap(cluster => cluster.items.map(s => {
+    const top = yOf(s.a);
+    const height = Math.max(20, yOf(s.b) - top);
+    const width = 100 / cluster.cols;
+    const label = `${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)}`;
+    return `
+      <button class="zoom-block ${s.live ? 'live' : ''} ${height < 38 ? 'tight' : ''}" style="${catVars(s.cat)};top:${top}px;height:${height}px;left:${s.lane * width}%;width:calc(${width}% - 6px)"
+        data-action="edit" data-id="${esc(s.taskId)}" title="${esc(s.text)} · ${label} · ${fmtDur(s.b - s.a)}">
+        <span class="zoom-text">${esc(s.text)}</span>
+        <span class="zoom-meta">${label} · ${fmtDur(s.b - s.a)}</span>
+      </button>`;
+  })).join('');
 
   return `
-    <div class="zoom" style="height:${span * ROW}px">
-      <div class="zoom-grid">
-        ${hours.map(h => `<div class="zoom-hour" style="top:${(h - from) * ROW}px"><span>${String(h % 24).padStart(2, '0')}:00</span></div>`).join('')}
-      </div>
-      <div class="zoom-blocks">
-        ${sessions.map(s => {
-          const top = (hour(s.a) - from) * ROW;
-          const height = Math.max(18, (hour(s.b) - hour(s.a)) * ROW);
-          const width = 100 / cols;
-          return `
-            <button class="zoom-block ${s.live ? 'live' : ''}" style="${catVars(s.cat)};top:${top}px;height:${height}px;left:${s.lane * width}%;width:calc(${width}% - 4px)"
-              data-action="edit" data-id="${esc(s.taskId)}" title="${esc(s.text)} · ${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)}">
-              <span class="zoom-text">${esc(s.text)}</span>
-              <span class="zoom-meta">${fmtTime(s.a)}–${s.live ? 'now' : fmtTime(s.b)} · ${fmtDur(s.b - s.a)}</span>
-            </button>`;
-        }).join('')}
-      </div>
+    <div class="zoom" style="--zoom-height:${total}px">
+      <div class="zoom-grid">${grid}${nowLine}</div>
+      <div class="zoom-blocks">${blocks}</div>
     </div>`;
 }
 
