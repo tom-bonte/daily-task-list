@@ -431,7 +431,7 @@ function publishState(runs, now = Date.now()) {
     ? 'HRSTATE|' + runs.map(r => {
       const cat = catById(r.cat);
       const colour = css.getPropertyValue(`--c${(cat.slot ?? 0) > 8 ? ((cat.slot - 1) % 8) + 1 : cat.slot ?? 0}`).trim();
-      return [r.id, M.fmtClock(r.base + now - r.s), cat.name, colour, r.text].map(clean).join('~');
+      return [r.id, M.fmtClock(r.base + now - r.s), cat.name, colour, r.text, r.date].map(clean).join('~');
     }).join('|')
     : 'HRSTATE';
 }

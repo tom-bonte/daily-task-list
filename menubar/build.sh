@@ -5,7 +5,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 app="$HOME/Applications/Habits Rabbits Menu.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-swiftc -O -o "$app/Contents/MacOS/HabitsRabbitsMenu" "$here/main.swift"
+swiftc -O -o "$app/Contents/MacOS/HabitsRabbitsMenu" "$here"/*.swift
 cp "$here/Info.plist" "$app/Contents/Info.plist"
 cp "$here/Resources/"menubar*.png "$app/Contents/Resources/"
 # A stable signing identity keeps the Accessibility permission across rebuilds;

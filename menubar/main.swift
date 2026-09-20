@@ -26,6 +26,7 @@ struct RunningTimer {
     var category: String
     var colour: NSColor
     var task: String
+    var date: String = ""
 
     var clock: String {
         String(format: "%d:%02d:%02d", seconds / 3600, (seconds / 60) % 60, seconds % 60)
@@ -50,7 +51,7 @@ func parseState(_ line: String) -> [RunningTimer] {
         guard f.count >= 5 else { return nil }
         let parts = f[1].split(separator: ":").map { Int($0) ?? 0 }
         let seconds = parts.count == 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : 0
-        return RunningTimer(id: f[0], seconds: seconds, category: f[2], colour: NSColor(hex: f[3]), task: f[4])
+        return RunningTimer(id: f[0], seconds: seconds, category: f[2], colour: NSColor(hex: f[3]), task: f[4], date: f.count > 5 ? f[5] : "")
     }
 }
 
@@ -137,6 +138,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var readAt = Date()
     var ticks = 0
     var menuOpen = false
+    let backend = Backend()
+    let signInItem = NSMenuItem(title: "Connect to Habits Rabbits…", action: #selector(signIn), keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let path = Bundle.main.path(forResource: "menubar", ofType: "png"),
@@ -152,7 +155,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         accessItem.target = self
+        signInItem.target = self
         menu.addItem(accessItem)          // only shown until permission is granted
+        menu.addItem(signInItem)          // only shown until the helper is connected
         menu.addItem(.separator())
         add(menu, "Force update", #selector(forceUpdate))
         add(menu, "Quit Habits Rabbits", #selector(quit), key: "q", mask: [.command])
@@ -252,14 +257,24 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `read: false` only advances the clocks, which keeps the menu bar alive on
     /// Spaces where the app's window cannot be read.
     func refresh(read: Bool) {
-        let appRunning = webApp() != nil
-        item.isVisible = appRunning
-        guard appRunning else { running = []; return }
-        accessItem.isHidden = AXIsProcessTrusted()
+        // With its own connection the helper is useful even when the app is closed.
+        item.isVisible = webApp() != nil || backend.isSignedIn
+        guard item.isVisible else { running = []; return }
+        accessItem.isHidden = backend.isSignedIn || AXIsProcessTrusted()
+        signInItem.isHidden = backend.isSignedIn
 
-        if read, AXIsProcessTrusted(), let line = stateLine() {
-            running = parseState(line)
-            readAt = Date()
+        if read {
+            if backend.isSignedIn {
+                backend.fetchRunning { [weak self] timers in
+                    guard let self else { return }
+                    running = timers
+                    readAt = Date()
+                    if menuOpen { rebuildTimerItems(displayed()) }
+                }
+            } else if AXIsProcessTrusted(), let line = stateLine() {
+                running = parseState(line)
+                readAt = Date()
+            }
         }
         if menuOpen { rebuildTimerItems(displayed()) }
     }
@@ -309,15 +324,39 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func stopOne(_ id: String) {
         guard let timer = running.first(where: { $0.id == id }) else { return }
-        stop(tasks: [timer.task], urlFallback: "?do=stop&task=\(id)")
+        if backend.isSignedIn, !timer.date.isEmpty {
+            backend.stop(timer: timer) { [weak self] ok in
+                if !ok { self?.stop(tasks: [timer.task], urlFallback: "?do=stop&task=\(id)") }
+            }
+        } else {
+            stop(tasks: [timer.task], urlFallback: "?do=stop&task=\(id)")
+        }
         running.removeAll { $0.id == id }
         refresh(read: false)
     }
 
     @objc private func stopAll() {
-        stop(tasks: running.map(\.task), urlFallback: "?do=stop")
+        let timers = running
+        if backend.isSignedIn {
+            for timer in timers where !timer.date.isEmpty { backend.stop(timer: timer) { _ in } }
+        } else {
+            stop(tasks: timers.map(\.task), urlFallback: "?do=stop")
+        }
         running.removeAll()
         refresh(read: false)
+    }
+
+    @objc private func signIn() {
+        backend.signIn { [weak self] error in
+            guard let self else { return }
+            if let error {
+                let alert = NSAlert()
+                alert.messageText = "Could not connect"
+                alert.informativeText = error
+                alert.runModal()
+            }
+            refresh(read: true)
+        }
     }
 
     /// Pressing the app's own pause button is instant and never reloads the
