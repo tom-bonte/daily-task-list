@@ -1,6 +1,6 @@
 {
-  "name": "Daily Task List",
-  "short_name": "Tasks",
+  "name": "Habits Rabbits",
+  "short_name": "Habits Rabbits",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

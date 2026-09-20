@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A personal daily task list with per-task timers and time statistics. It replaces an Apple Notes checklist. It has a single user (Google sign-in) and is a plain HTML/CSS/JS web app with no build step. Data lives in Firebase (Auth + Firestore) and hosting is on **Netlify**.
+A personal daily task list with per-task timers and time statistics, called **Habits Rabbits** in the UI (the repo and folder are still `daily-task-list`). It replaces an Apple Notes checklist. It has a single user (Google sign-in) and is a plain HTML/CSS/JS web app with no build step. Data lives in Firebase (Auth + Firestore) and hosting is on **Netlify**.
 
 ## Commands
 
@@ -30,7 +30,7 @@ All app code is in `public/`, as ES modules loaded straight from the browser. Th
 - Keyboard shortcuts (in the `keydown` handler): `1`–`5` switch views, `N` focuses the add field, `/` opens Search, `←`/`→` change day, `T` jumps to today, `J`/`K` select a task, `Space` starts/stops its timer, `E` edits it, `X` completes it.
 - Tasks are reordered by HTML5 drag and drop (`dragstart`/`dragover`/`drop` on `#view`); dropping into another category card also changes the task's category. Category order is changed with the ↑/↓ buttons in Settings.
 - Icons come from `brand/logo.jpeg` (kept out of `public/`, so the source is not deployed). Rebuild them with `npm run icons` (`scripts/build-icons.mjs`, uses sharp): it squares the logo on white, knocks the white out to alpha for `favicon.webp`, `favicon-32.png`, `icon-192.png` and `icon-512.png`, and keeps a white background for `apple-touch-icon.png`, because iOS composites transparency onto black.
-- `sw.js` + `manifest.json` + the icons: offline app shell (cache-first, refreshed in the background) and installability. Bump `CACHE` in `sw.js` when the precache list changes. The service worker is **not** registered on localhost, and unregisters itself there, so local edits are never served stale.
+- `sw.js` + `manifest.json` + the icons: offline app shell and installability. Code (HTML/CSS/JS/JSON) is **network-first** so a deploy can never leave a client running a mix of old and new files (that produced an empty zoom view once); icons and the Firebase SDK stay cache-first, and the cache is the offline fallback. Bump `CACHE` in `sw.js` when the precache list changes. The service worker is **not** registered on localhost, and unregisters itself there, so local edits are never served stale.
 - Times are 24-hour everywhere. Native `input[type=time]` follows the browser locale (AM/PM), so time entry uses plain text inputs (`.time-input`) normalised by `normHHMM` ("930" → "09:30"); `blockFromTimes` accepts either.
 - Clicking the day timeline opens `renderDayZoom` in the `#sheet` dialog (`zoom-dialog` class): an hour grid where stretches with no activity collapse into a "Nh quiet" row, only genuinely overlapping sessions share the width (clustered, then lane-packed), a "now" line marks the current time on today, and a block click opens that task.
 - `js/ui.js`: `esc`, `catColor` (solid hue) / `catFill` (mark background, striped for slots 9–16) / `catVars` (sets both as `--cc` / `--cf` inline), `renderTimeline` (the day's timer sessions as a strip plus a list).

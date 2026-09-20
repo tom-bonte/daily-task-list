@@ -60,7 +60,7 @@ function renderLogin(error) {
   document.body.classList.add('logged-out');
   viewEl.innerHTML = `
     <div class="login">
-      <h1>Daily Task List</h1>
+      <h1>Habits Rabbits</h1>
       <p class="muted">Plan your day, time your tasks, see where the hours go.</p>
       <button class="primary big" data-action="sign-in">Sign in with Google</button>
       ${error ? `<p class="error">${esc(error)}</p>` : ''}
@@ -357,7 +357,7 @@ function taskRow(t) {
 
 function renderRunbar() {
   const runs = S.settings?.running || [];
-  if (!runs.length) { runEl.innerHTML = ''; runEl.hidden = true; document.title = 'Daily Task List'; return; }
+  if (!runs.length) { runEl.innerHTML = ''; runEl.hidden = true; document.title = 'Habits Rabbits'; return; }
   const now = Date.now();
   runEl.hidden = false;
   runEl.innerHTML = `
