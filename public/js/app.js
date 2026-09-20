@@ -222,7 +222,11 @@ function render() {
     if (again && keep.value) { again.value = keep.value; syncGuess(again); }
     if (again && keep.focused) again.focus();
   }
-  $('#nav-foot').textContent = S.user?.email || '';
+  // Quiet reminder of the macOS shortcut that brings this app forward.
+  const mac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
+  $('#nav-foot').innerHTML = `
+    <span class="nav-mail">${esc(S.user?.email || '')}</span>
+    ${mac ? '<span class="nav-hint"><kbd>⌥</kbd><kbd>space</kbd><span>to open</span></span>' : ''}`;
   navEl.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-current', b.dataset.view === S.view ? 'page' : 'false'));
   renderRunbar();
 }
