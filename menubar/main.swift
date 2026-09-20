@@ -211,21 +211,42 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// The accessibility tree is wide, so walk it shallowly and stop at the
-    /// first element whose text is the published state.
-    private func search(_ element: AXUIElement, depth: Int) -> String? {
-        if depth > 14 { return nil }
-        var value: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
-           let text = value as? String, text.hasPrefix("HRSTATE") {
-            return text
-        }
+    /// first element the predicate accepts.
+    private func find(_ element: AXUIElement, depth: Int, _ matches: (AXUIElement) -> Bool) -> AXUIElement? {
+        if depth > 16 { return nil }
+        if matches(element) { return element }
         var childValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childValue) == .success,
               let children = childValue as? [AXUIElement] else { return nil }
-        for child in children.prefix(60) {
-            if let found = search(child, depth: depth + 1) { return found }
+        for child in children.prefix(80) {
+            if let found = find(child, depth: depth + 1, matches) { return found }
         }
         return nil
+    }
+
+    private func attribute(_ element: AXUIElement, _ name: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private func search(_ element: AXUIElement, depth: Int) -> String? {
+        find(element, depth: depth) { (attribute($0, kAXValueAttribute as String) ?? "").hasPrefix("HRSTATE") }
+            .flatMap { attribute($0, kAXValueAttribute as String) }
+    }
+
+    /// Presses the pause button of that task inside the app. Far better than
+    /// reopening the app with a command URL, which reloads the whole page.
+    private func pressPause(for task: String) -> Bool {
+        let label = "Pause \(task)"
+        for app in NSWorkspace.shared.runningApplications where app.bundleURL?.path == webAppPath {
+            let root = AXUIElementCreateApplication(app.processIdentifier)
+            guard let button = find(root, depth: 0, { element in
+                (attribute(element, kAXDescriptionAttribute as String) ?? attribute(element, kAXTitleAttribute as String) ?? "") == label
+            }) else { continue }
+            return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+        }
+        return false
     }
 
     /// `read: false` only advances the clocks, which keeps the menu bar alive on
@@ -240,9 +261,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             running = parseState(line)
             readAt = Date()
         }
-        let shown = displayed()
-        item.button?.title = shown.isEmpty ? "" : " " + shown.map(\.compact).joined(separator: " · ")
-        if menuOpen { rebuildTimerItems(shown) }
+        if menuOpen { rebuildTimerItems(displayed()) }
     }
 
     private func displayed() -> [RunningTimer] {
@@ -289,13 +308,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: actions
 
     private func stopOne(_ id: String) {
-        send("?do=stop&task=\(id)")
+        guard let timer = running.first(where: { $0.id == id }) else { return }
+        if !pressPause(for: timer.task) { send("?do=stop&task=\(id)") }  // fallback
         running.removeAll { $0.id == id }
         refresh(read: false)
     }
 
     @objc private func stopAll() {
-        send("?do=stop")
+        let tasks = running.map(\.task)
+        let pressedAll = tasks.allSatisfy { pressPause(for: $0) }
+        if !pressedAll { send("?do=stop") }
         running.removeAll()
         refresh(read: false)
     }
