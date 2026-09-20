@@ -8,7 +8,7 @@ const LONG_TIMER_MS = 3 * 3600000;
 const NOTIFY_KEY = 'dtl-notify';
 
 const S = {
-  fb: null, store: null, user: null, today: M.todayKey(), longAsked: null, launchApplied: false,
+  fb: null, store: null, user: null, today: M.todayKey(), longAsked: null, launchApplied: false, loadingTimer: null,
   settings: null,
   date: M.todayKey(), day: null, dayLoaded: false, lastBefore: undefined,
   view: 'day',
@@ -87,8 +87,21 @@ async function applyLaunchParams() {
 
 function start() {
   document.body.classList.remove('logged-out');
+  // Never sit on "Loading…" in silence: a page opened in the background can be
+  // throttled before Firestore connects, so offer a way out.
+  clearTimeout(S.loadingTimer);
+  S.loadingTimer = setTimeout(() => {
+    if (S.settings) return;
+    viewEl.innerHTML = `
+      <div class="login">
+        <h1>Still connecting…</h1>
+        <p class="muted">Habits Rabbits can't reach your data right now.</p>
+        <button class="primary" data-action="reload">Reload</button>
+      </div>`;
+  }, 8000);
   S.unsub.push(S.store.watchSettings(s => {
     const first = !S.settings;
+    clearTimeout(S.loadingTimer);
     S.settings = M.withDefaults(s);
     // First run, or settings from an older version: persist the defaults / migration.
     if (!s || (s.v ?? 1) < M.SETTINGS_VERSION) saveSettings();
@@ -1015,6 +1028,7 @@ document.addEventListener('click', async e => {
           : err.code === 'auth/popup-closed-by-user' ? '' : err.message);
       }
       break;
+    case 'reload': location.reload(); break;
     case 'sign-out': await stopRunning(); S.fb.signOut(); break;
     case 'view': showView(el.dataset.view); break;
     case 'day-shift': openDay(M.addDays(S.date, +el.dataset.dir)); break;
