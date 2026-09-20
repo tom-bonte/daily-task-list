@@ -18,7 +18,7 @@ firebase deploy --only firestore:rules   # rules are the only thing deployed via
 - Any new hosting domain must be listed under Firebase Console → Authentication → Settings → Authorized domains, or Google sign-in fails with `auth/unauthorized-domain`.
 - `http://localhost:5173` without `?demo` talks to the **real Firestore data** (localhost is an authorized auth domain), so local edits change the user's live tasks.
 - Open `http://localhost:5173/?demo` for **demo mode**: it uses a localStorage store and needs no sign-in or network. Use it to test UI changes; Google sign-in can't be automated.
-- `npm test` covers the pure logic in `public/js/model.js` only (`test/model.test.js`, node's built-in runner, no dependencies). Anything touching the DOM or Firebase is checked by hand in demo mode. There is no linter or bundler.
+- `npm test` covers the pure logic in `public/js/model.js` and `computeStats` in `public/js/stats.js` (`test/*.test.js`, node's built-in runner, no dependencies). Anything touching the DOM or Firebase is checked by hand in demo mode. There is no linter or bundler.
 - Python's `http.server` can't read `~/Documents` in this environment; use `npx serve`.
 
 ## Architecture
@@ -35,7 +35,7 @@ All app code is in `public/`, as ES modules loaded straight from the browser. Th
 - Times are 24-hour everywhere. Native `input[type=time]` follows the browser locale (AM/PM), so time entry uses plain text inputs (`.time-input`) normalised by `normHHMM` ("930" → "09:30"); `blockFromTimes` accepts either.
 - Clicking the day timeline opens `renderDayZoom` in the `#sheet` dialog (`zoom-dialog` class): an hour grid where stretches with no activity collapse into a "Nh quiet" row, only genuinely overlapping sessions share the width (clustered, then lane-packed), a "now" line marks the current time on today, and a block click opens that task.
 - `js/ui.js`: `esc`, `catColor` (solid hue) / `catFill` (mark background, striped for slots 9–16) / `catVars` (sets both as `--cc` / `--cf` inline), `renderTimeline` (the day's timer sessions as a strip plus a list).
-- `js/stats.js`: `computeStats` (pure aggregation into categories, tasks, and day/month buckets) and `renderStats` (bars, stacked-column chart, table view).
+- `js/stats.js`: `computeStats` (pure aggregation into categories, tasks, day/month buckets, a per-day map, a weekday × hour grid, streaks, best day, longest block and per-task series) and `renderStats`. The Stats page shows tiles with a delta against the previous period (`loadStats` fetches from the start of the previous period and `statsView` computes both), the category bars with per-category deltas, the stacked columns, a **Rhythm** heatmap (weekday × hour, averaged per weekday for month/year), the **Every day** calendar heatmap on Year (click a cell → that day's stats via `stats-day`), and a per-task sparkline column. Heatmaps use one hue (`--c1`) in five `color-mix` steps (`.l1`–`.l5`, `.l0` = nothing). Any element with a `data-tip` JSON attribute `{ head, rows: [{ cat, ms }], total, note }` gets the shared hover card (`showTip` in `app.js`), the same one the chart columns use via `data-bucket`.
 - `js/firebase.js` (Firestore store + Google auth) and `js/local-store.js` (demo store) implement the **same store interface**: `watchSettings`, `saveSettings`, `watchDay`, `getDay`, `saveDay`, `getDaysRange`, `getLastDayBefore`. `app.js` only talks to that interface.
 
 ### Data model (Firestore)

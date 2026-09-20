@@ -1,5 +1,5 @@
 import * as M from './model.js';
-import { computeStats, renderStats, categoryBars, bucketName } from './stats.js';
+import { computeStats, renderStats, categoryBars, bucketName, previousAnchor } from './stats.js';
 import { esc, catColor, catFill, catVars, renderTimeline, renderDayZoom, SLOT_NAMES } from './ui.js';
 
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -440,7 +440,9 @@ function statsView() {
   const st = S.stats;
   if (!st.days) return `<header class="viewhead"><h1>Stats</h1></header><div class="loading">Loading…</div>`;
   st.computed = computeStats(st.days, S.settings.categories, st.kind, st.anchor);
-  return renderStats(st.computed, S.settings.categories, st.expanded, st.days);
+  // The loaded range also covers the previous period, for the "vs last week" deltas.
+  const prev = computeStats(st.days, S.settings.categories, st.kind, previousAnchor(st.kind, st.anchor));
+  return renderStats(st.computed, S.settings.categories, st.expanded, st.days, prev);
 }
 
 function backlogView() {
@@ -599,7 +601,9 @@ function notify(title, body) {
 // ---------------- stats loading ----------------
 
 async function loadStats() {
-  const { from, to } = M.periodRange(S.stats.kind, S.stats.anchor);
+  const { to } = M.periodRange(S.stats.kind, S.stats.anchor);
+  // From the start of the previous period, so the deltas have something to compare with.
+  const { from } = M.periodRange(S.stats.kind, previousAnchor(S.stats.kind, S.stats.anchor));
   const want = `${from}|${to}`;
   S.stats.want = want;
   const days = await S.store.getDaysRange(from, to);
@@ -934,31 +938,45 @@ function openLogTime(id) {
 
 // ---------------- stats tooltip ----------------
 
+// Hover card for a chart column (data-bucket) or any element carrying a
+// data-tip JSON { head, rows: [{ cat, ms }], total, note }.
 function showTip(col) {
-  const st = S.stats.computed;
-  const b = st?.buckets[+col.dataset.bucket];
-  if (!b) return;
+  let data;
+  if (col.dataset.tip) {
+    try { data = JSON.parse(col.dataset.tip); } catch { return; }
+  } else {
+    const st = S.stats.computed;
+    const b = st?.buckets[+col.dataset.bucket];
+    if (!b) return;
+    data = { head: bucketName(st.kind, b.key), rows: Object.entries(b.byCat).map(([cat, ms]) => ({ cat, ms })), total: b.total };
+  }
   tip.replaceChildren();
   const head = document.createElement('div');
   head.className = 'tip-head';
-  head.textContent = bucketName(st.kind, b.key);
+  head.textContent = data.head;
   tip.append(head);
-  const rows = S.settings.categories.filter(c => b.byCat[c.id]).sort((a, c) => b.byCat[c.id] - b.byCat[a.id]);
-  for (const c of rows) {
+  const rows = (data.rows || []).map(r => ({ cat: catById(r.cat), ms: r.ms })).filter(r => r.cat).sort((a, b) => b.ms - a.ms);
+  for (const { cat, ms } of rows) {
     const row = document.createElement('div');
     row.className = 'tip-row';
-    row.style.setProperty('--cc', catColor(c));
-    row.style.setProperty('--cf', catFill(c));
+    row.style.setProperty('--cc', catColor(cat));
+    row.style.setProperty('--cf', catFill(cat));
     const key = document.createElement('span'); key.className = 'tip-key';
-    const val = document.createElement('strong'); val.textContent = M.fmtDur(b.byCat[c.id]);
-    const name = document.createElement('span'); name.textContent = c.name;
+    const val = document.createElement('strong'); val.textContent = M.fmtDur(ms);
+    const name = document.createElement('span'); name.textContent = cat.name;
     row.append(key, val, name);
     tip.append(row);
   }
   const tot = document.createElement('div');
   tot.className = 'tip-total';
-  tot.textContent = b.total ? `Total ${M.fmtDur(b.total)}` : 'Nothing tracked';
+  tot.textContent = data.total ? `${rows.length ? 'Total ' : ''}${M.fmtDur(data.total)}` : 'Nothing tracked';
   tip.append(tot);
+  if (data.note) {
+    const note = document.createElement('div');
+    note.className = 'tip-note';
+    note.textContent = data.note;
+    tip.append(note);
+  }
 
   const r = col.getBoundingClientRect();
   tip.classList.add('show');
@@ -1177,6 +1195,10 @@ document.addEventListener('click', async e => {
       break;
     case 'search-open': openDay(el.dataset.date); showView('day'); break;
     case 'search-clear': S.search.q = ''; render(); break;
+    case 'stats-day':
+      hideTip();
+      S.stats.kind = 'day'; S.stats.anchor = el.dataset.date; S.stats.days = null; S.stats.expanded.clear(); loadStats(); render();
+      break;
     case 'stats-range':
       S.stats.kind = el.dataset.range; S.stats.days = null; S.stats.expanded.clear(); loadStats(); render();
       break;
@@ -1414,9 +1436,9 @@ viewEl.addEventListener('drop', async e => {
   });
 });
 
-viewEl.addEventListener('pointerover', e => { const col = e.target.closest('.col'); if (col) showTip(col); });
+viewEl.addEventListener('pointerover', e => { const col = e.target.closest('.col, [data-tip]'); if (col) showTip(col); });
 viewEl.addEventListener('pointerleave', hideTip);
-viewEl.addEventListener('focusin', e => { const col = e.target.closest('.col'); if (col) showTip(col); });
+viewEl.addEventListener('focusin', e => { const col = e.target.closest('.col, [data-tip]'); if (col) showTip(col); });
 viewEl.addEventListener('focusout', hideTip);
 addEventListener('scroll', hideTip, { passive: true });
 
