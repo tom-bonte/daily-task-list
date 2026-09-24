@@ -374,6 +374,13 @@ function railHtml(now = Date.now()) {
 const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
 const PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>';
 const CHECK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const FORWARD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M12.5 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+// "Tomorrow" on today, the date on any other day.
+function nextLabel(key = S.date) {
+  const next = M.addDays(key, 1);
+  return M.relativeLabel(next) || M.dayLabel(next);
+}
 
 function taskRow(t) {
   const running = isRunningTask(t.id);
@@ -391,6 +398,7 @@ function taskRow(t) {
         ${meta ? `<span class="task-meta">${meta}</span>` : ''}
         ${pct != null && (ms || running) ? `<span class="progress"><span data-live-bar="${t.id}" style="width:${pct}%"></span></span>` : ''}
       </button>
+      <button class="rowcopy" data-action="copy-next" aria-label="Copy to ${esc(nextLabel())}: ${esc(t.text)}" title="Copy to ${esc(nextLabel())}, keeping it here too (C)">${FORWARD}</button>
       <button class="play ${running ? 'on' : ''}" data-action="toggle-timer" aria-label="${running ? 'Pause' : 'Start'} timer: ${esc(t.text)}">${running ? PAUSE : PLAY}</button>
     </li>`;
 }
@@ -713,7 +721,7 @@ function openSheet(id) {
   const date = S.date;
   const draft = { adjust: t.adjust || 0, sessions: structuredClone(t.sessions) };
   const next = M.addDays(date, 1);
-  const nextLabel = M.relativeLabel(next) || M.dayLabel(next);
+  const nextDay = nextLabel(date);
   const draftMs = () => M.taskMs({ sessions: draft.sessions, adjust: draft.adjust });
   sheet.innerHTML = `
     <form class="sheet-form">
@@ -741,7 +749,7 @@ function openSheet(id) {
       </div>
       <div class="sheet-actions">
         <button type="button" class="ghost danger" data-sheet="delete">Delete</button>
-        <button type="button" class="ghost" data-sheet="copy-next" title="Copy this task to ${esc(nextLabel)}, keeping it here too (C)">→ ${esc(nextLabel)}</button>
+        <button type="button" class="ghost" data-sheet="copy-next" title="Copy this task to ${esc(nextDay)}, keeping it here too (C)">→ ${esc(nextDay)}</button>
         <button type="button" class="ghost" data-sheet="backlog">To Wachtruimte</button>
         <span class="spacer"></span>
         <button type="button" class="ghost" data-sheet="cancel">Cancel</button>
@@ -1157,6 +1165,7 @@ document.addEventListener('click', async e => {
     case 'view': showView(el.dataset.view); break;
     case 'day-shift': openDay(M.addDays(S.date, +el.dataset.dir)); break;
     case 'goto-today': openDay(M.todayKey()); break;
+    case 'copy-next': copyTaskToDay(findTask(id), M.addDays(S.date, 1)); break;
     case 'day-stats': S.stats.kind = 'day'; S.stats.anchor = S.date; S.stats.days = null; showView('stats'); break;
     case 'toggle-done': {
       const t = findTask(id);

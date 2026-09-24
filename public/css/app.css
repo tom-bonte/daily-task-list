@@ -239,6 +239,14 @@ body > #runbar { position: fixed; left: 12px; bottom: 44px; width: calc(var(--si
 .play svg { width: 18px; height: 18px; fill: currentColor; }
 .task:hover .play, .play:focus-visible { opacity: 1; }
 .play:hover { background: var(--surface-2); color: var(--ink); }
+/* Secondary row action: out of the way until the row is hovered or focused. */
+.rowcopy {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  color: var(--muted); opacity: 0; transition: opacity 0.12s;
+}
+.rowcopy svg { width: 16px; height: 16px; }
+.task:hover .rowcopy, .rowcopy:focus-visible { opacity: 1; }
+.rowcopy:hover { background: var(--surface-2); color: var(--ink); }
 .play.on { background: var(--cc, var(--accent)); color: #fff; opacity: 1; }
 
 .empty { text-align: center; padding: 40px 16px; background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius); }
@@ -555,6 +563,7 @@ button.cal-cell:hover, button.cal-cell:focus-visible { outline: 2px solid var(--
   .addbar input { flex-basis: 100%; padding-right: 12px; }
   .addbar select { flex: 1; width: auto; }
   .play { opacity: 1; width: 40px; height: 40px; }
+  .rowcopy { display: none; }
   .check { width: 44px; height: 44px; }
   .stat-row { grid-template-columns: 1fr auto 36px; row-gap: 6px; }
   .stat-row .bar-track { grid-row: 2; grid-column: 1 / -1; height: 10px; }
