@@ -191,11 +191,15 @@ export function taskMs(task, now = Date.now()) {
   return Math.max(0, ms);
 }
 
+// The same task on another day: the plan carries over (text, category, planned
+// minutes, repeat), the logged time does not.
+export function copyForDay(task) {
+  return { ...task, id: uid(), done: false, sessions: [], adjust: 0 };
+}
+
 // Next day's plan: only the repeating tasks, reset.
 export function carryOver(tasks) {
-  return tasks
-    .filter(t => t.repeat)
-    .map(t => ({ ...t, id: uid(), done: false, sessions: [], adjust: 0 }));
+  return tasks.filter(t => t.repeat).map(copyForDay);
 }
 
 // A manually logged session from "HH:MM" inputs on a given day. An end before

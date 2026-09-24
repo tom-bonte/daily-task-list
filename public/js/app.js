@@ -598,6 +598,18 @@ function notify(title, body) {
   try { new Notification(title, { body, tag: 'dtl-timer' }); } catch { /* unsupported */ }
 }
 
+// Copy a task onto another day, leaving the original where it is. Skips a day
+// that already has a task with the same text, the way "Plan tomorrow" does.
+async function copyTaskToDay(task, key) {
+  if (!task) return;
+  const label = M.relativeLabel(key) || M.dayLabel(key);
+  const target = (await S.store.getDay(key)) ?? { tasks: [] };
+  const norm = M.normText(task.text);
+  if ((target.tasks || []).some(x => M.normText(x.text) === norm)) return toast(`Already on ${label}`);
+  await persist(S.store.saveDay(key, { ...target, tasks: [...(target.tasks || []), M.copyForDay(task)] }), 'that day');
+  ask(`Copied “${task.text}” to ${label}`, 'Open', () => openDay(key));
+}
+
 // ---------------- stats loading ----------------
 
 async function loadStats() {
@@ -700,6 +712,8 @@ function openSheet(id) {
   if (!t) return;
   const date = S.date;
   const draft = { adjust: t.adjust || 0, sessions: structuredClone(t.sessions) };
+  const next = M.addDays(date, 1);
+  const nextLabel = M.relativeLabel(next) || M.dayLabel(next);
   const draftMs = () => M.taskMs({ sessions: draft.sessions, adjust: draft.adjust });
   sheet.innerHTML = `
     <form class="sheet-form">
@@ -727,6 +741,7 @@ function openSheet(id) {
       </div>
       <div class="sheet-actions">
         <button type="button" class="ghost danger" data-sheet="delete">Delete</button>
+        <button type="button" class="ghost" data-sheet="copy-next" title="Copy this task to ${esc(nextLabel)}, keeping it here too (C)">→ ${esc(nextLabel)}</button>
         <button type="button" class="ghost" data-sheet="backlog">To Wachtruimte</button>
         <span class="spacer"></span>
         <button type="button" class="ghost" data-sheet="cancel">Cancel</button>
@@ -810,6 +825,16 @@ function openSheet(id) {
       const at = S.day.tasks.findIndex(x => x.id === id);
       await mutateDay(date, d => { d.tasks = d.tasks.filter(x => x.id !== id); });
       ask(`Deleted “${gone.text}”`, 'Undo', () => mutateDay(date, d => { d.tasks.splice(at, 0, gone); }));
+    }
+    if (act === 'copy-next') {
+      sheet.close();
+      // Copy what is on screen, including edits not saved yet.
+      copyTaskToDay({
+        text: textIn.value.trim() || t.text,
+        cat: form.elements.cat.value,
+        target: targetIn.value === '' ? null : Math.max(0, Math.round(+targetIn.value)),
+        repeat: form.elements.repeat.checked,
+      }, next);
     }
     if (act === 'backlog') {
       if (isRunningTask(id)) await stopRunning(id);
@@ -1321,6 +1346,7 @@ document.addEventListener('keydown', e => {
   if (!S.sel || !ids.includes(S.sel)) return;
   if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); isRunningTask(S.sel) ? stopRunning(S.sel) : startTimer(S.sel); }
   if (e.key === 'e') { e.preventDefault(); openSheet(S.sel); }
+  if (e.key === 'c') { e.preventDefault(); copyTaskToDay(findTask(S.sel), M.addDays(S.date, 1)); }
   if (e.key === 'x') { e.preventDefault(); viewEl.querySelector(`.task[data-id="${S.sel}"] .check`)?.click(); }
 });
 

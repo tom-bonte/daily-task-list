@@ -93,6 +93,19 @@ test('carryOver copies only the repeating tasks, reset', () => {
   assert.deepEqual([next.done, next.sessions, next.adjust], [false, [], 0]);
 });
 
+test('copyForDay keeps the plan and drops the logged time', () => {
+  const t = { id: 'a', text: '1hr Read Outlander', cat: 'reading', done: true, repeat: true, target: 60, sessions: [{ s: 1, e: 2 }], adjust: 5 };
+  const copy = M.copyForDay(t);
+  assert.notEqual(copy.id, 'a');
+  assert.deepEqual(
+    { text: copy.text, cat: copy.cat, target: copy.target, repeat: copy.repeat },
+    { text: t.text, cat: t.cat, target: 60, repeat: true });
+  assert.deepEqual([copy.done, copy.sessions, copy.adjust], [false, [], 0]);
+  // A running task is not copied as running.
+  assert.equal(M.isRunning(M.copyForDay({ ...t, sessions: [{ s: 1, e: null }] })), false);
+  assert.deepEqual(t.sessions, [{ s: 1, e: 2 }], 'the original is untouched');
+});
+
 test('normHHMM accepts the shapes people type', () => {
   assert.equal(M.normHHMM('930'), '09:30');
   assert.equal(M.normHHMM('9:30'), '09:30');
